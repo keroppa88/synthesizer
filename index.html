@@ -6,21 +6,26 @@
 <title>Drone Synthesizer</title>
 <style>
   body { margin: 0; background: #0d0d0f; color: #ddd; font-family: system-ui, sans-serif; }
-  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; }
   h1 { font-size: 20px; letter-spacing: .1em; color: #e8b86a; }
-  section { border: 1px solid #2a2a30; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  section { border: 1px solid #2a2a30; border-radius: 8px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }
   h2 { font-size: 13px; color: #888; margin: 0 0 8px; }
-  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-  .row .name { width: 90px; }
-  .row .val { width: 90px; text-align: right; font-variant-numeric: tabular-nums; color: #e8b86a; }
+
+  /* キーボードと同じ並び：10列 */
+  .grid { display: grid; grid-template-columns: repeat(10, minmax(72px, 1fr)); gap: 6px; }
+  .col { display: flex; flex-direction: column; gap: 4px; text-align: center; }
+  .col.empty { opacity: .25; }
+  .name { font-size: 12px; color: #aaa; }
+  .val { font-size: 13px; color: #e8b86a; font-variant-numeric: tabular-nums; min-height: 1.2em; }
+
   button { background: #1c1c22; color: #ddd; border: 1px solid #3a3a44; border-radius: 6px;
-           padding: 6px 10px; font-size: 14px; cursor: pointer; }
+           padding: 8px 4px; font-size: 14px; cursor: pointer; }
+  button:disabled { cursor: default; }
   button.on { background: #6b4a1a; border-color: #e8b86a; }
   button.flash { background: #e8b86a; color: #000; }
-  kbd { font-size: 11px; color: #999; margin-left: 4px; border: 1px solid #555; border-radius: 3px; padding: 0 3px; }
-  button.flash kbd { color: #000; border-color: #000; }
-  #play { width: 100%; font-size: 18px; padding: 12px; }
-  #help { display: none; font-size: 13px; color: #aaa; }
+  kbd { display: block; font-size: 15px; font-weight: bold; color: #fff; }
+  button.flash kbd { color: #000; }
+  #help { display: none; font-size: 13px; color: #aaa; margin-top: 8px; }
   #help.show { display: block; }
 </style>
 </head>
@@ -29,25 +34,14 @@
   <h1>DRONE SYNTHESIZER</h1>
 
   <section>
-    <h2>切替（数字キー）</h2>
-    <button id="play" data-act="play">▶ 再生 / 停止<kbd>0</kbd></button>
-    <div class="row">
-      <button data-act="v0">低音（-1oct）<kbd>1</kbd></button>
-      <button data-act="v1">基音<kbd>2</kbd></button>
-      <button data-act="v2">5度<kbd>3</kbd></button>
-      <button data-act="v3">オクターブ<kbd>4</kbd></button>
-    </div>
-    <div class="row">
-      <button data-act="wave">波形<kbd>5</kbd></button>
-      <span class="val" id="v-wave"></span>
-      <button data-act="help">ショートカット一覧<kbd>9</kbd></button>
-    </div>
+    <h2>切替</h2>
+    <div class="grid" id="toggles"></div>
     <div id="help"></div>
   </section>
 
   <section>
-    <h2>つまみ（上段キー＝上げる／下段キー＝下げる）</h2>
-    <div id="knobs"></div>
+    <h2>つまみ（上キー＝上げる／下キー＝下げる）</h2>
+    <div class="grid" id="knobs"></div>
   </section>
 </main>
 
@@ -57,8 +51,20 @@ const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const WAVES = ['sawtooth','triangle','square','sine'];
 const VOICE_RATIOS = [0.5, 1, 1.5, 2];          // 低音・基音・5度・オクターブ
 
+// 切替: [数字キー, 操作名, 表示名]（キーボードの並び順。操作名なし＝空き）
+const TOGGLES = [
+  ['1', 'v0',   '低音'],
+  ['2', 'v1',   '基音'],
+  ['3', 'v2',   '5度'],
+  ['4', 'v3',   'オクターブ'],
+  ['5', 'wave', '波形'],
+  ['6'], ['7'], ['8'],
+  ['9', 'help', '一覧'],
+  ['0', 'play', '再生/停止'],
+];
+
 // つまみ: [キー名, 表示名, 上げるキー, 下げるキー, 最小, 最大, 初期値, 1回の変化量, 単位]
-// 変化量が 1より大きく2未満 → 掛け算で変化（周波数系）
+// 変化量が 1より大きく2未満 → 掛け算で変化（周波数系）。キー名なし＝空き
 const KNOBS = [
   ['root',   '基音',        'Q', 'A', 0,   11,   2,    1,    ''],
   ['oct',    'オクターブ',  'W', 'S', 0,   5,    2,    1,    ''],
@@ -69,12 +75,12 @@ const KNOBS = [
   ['lfoAmt', '揺れ深さ',    'U', 'J', 0,   3000, 400,  100,  'Hz'],
   ['reverb', '残響',        'I', 'K', 0,   1,    0.5,  0.05, ''],
   ['volume', '音量',        'O', 'L', 0,   1,    0.5,  0.05, ''],
-  // P / ; は空き
+  ['',       '',            'P', ';'],
 ];
 
 // ===== 状態 =====
 const st = { playing: false, wave: 0, voices: [true, true, true, false] };
-KNOBS.forEach(k => st[k[0]] = k[6]);
+KNOBS.forEach(k => { if (k[0]) st[k[0]] = k[6]; });
 
 // ===== 音の仕組み =====
 let ac, filter, lfo, lfoGain, dry, wet, master, voices = [];
@@ -139,6 +145,7 @@ const ACTIONS = {
 [0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => st.voices[i] = !st.voices[i]);
 
 KNOBS.forEach(([key, , , , min, max, , step]) => {
+  if (!key) return;
   const mul = step > 1 && step < 2;
   ACTIONS[key + '+'] = () => st[key] = Math.min(max, mul ? st[key] * step : st[key] + step);
   ACTIONS[key + '-'] = () => st[key] = Math.max(min, mul ? st[key] / step : st[key] - step);
@@ -148,12 +155,10 @@ ACTIONS['root+'] = () => st.root = (st.root + 1) % 12;
 ACTIONS['root-'] = () => st.root = (st.root + 11) % 12;
 
 // キー → 操作
-const KEYMAP = {
-  Digit0: 'play', Space: 'play', Digit1: 'v0', Digit2: 'v1', Digit3: 'v2', Digit4: 'v3',
-  Digit5: 'wave', Digit9: 'help',
-};
+const KEYMAP = { Space: 'play' };
+TOGGLES.forEach(([k, act]) => { if (act) KEYMAP['Digit' + k] = act; });
 const codeOf = k => k === ';' ? 'Semicolon' : 'Key' + k;
-KNOBS.forEach(([key, , up, down]) => { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; });
+KNOBS.forEach(([key, , up, down]) => { if (key) { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; } });
 
 function run(act) {
   ACTIONS[act](); applyAll(); render();
@@ -161,26 +166,39 @@ function run(act) {
   if (b) { b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 120); }
 }
 
-// ===== 画面 =====
-document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =>
-  `<div class="row"><span class="name">${name}</span>
-   <button data-act="${key}+">＋<kbd>${up}</kbd></button><button data-act="${key}-">−<kbd>${down}</kbd></button>
-   <span class="val" id="v-${key}"></span></div>`).join('');
+// ===== 画面（縦に要素、横にキー順） =====
+const btn = (act, key, label) =>
+  `<button ${act ? `data-act="${act}"` : 'disabled'}><kbd>${key}</kbd>${label}</button>`;
 
-// ショートカット一覧（全ボタンから自動で作る）
-document.getElementById('help').innerHTML = [...document.querySelectorAll('button[data-act]')].map(b => {
-  const label = b.closest('.row')?.querySelector('.name')?.textContent || '';
-  return `<div>${b.querySelector('kbd').outerHTML} ${label} ${b.firstChild.textContent}</div>`;
-}).join('');
+document.getElementById('toggles').innerHTML = TOGGLES.map(([key, act, name]) =>
+  `<div class="col${act ? '' : ' empty'}">
+     ${btn(act, key, name || '')}
+     <span class="val" id="t-${act}"></span>
+   </div>`).join('');
+
+document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =>
+  `<div class="col${key ? '' : ' empty'}">
+     ${btn(key && key + '+', up, '＋')}
+     <span class="name">${name || '空き'}</span>
+     <span class="val" id="v-${key}"></span>
+     ${btn(key && key + '-', down, '−')}
+   </div>`).join('');
+
+// ショートカット一覧
+document.getElementById('help').innerHTML =
+  TOGGLES.filter(t => t[1]).map(([k, , n]) => `<div>${k}：${n}</div>`).join('') +
+  KNOBS.filter(k => k[0]).map(([, n, u, d]) => `<div>${u} / ${d}：${n}</div>`).join('') +
+  '<div>Space：再生/停止</div>';
 
 function render() {
   const fmt = (v, u) => (v < 10 ? v.toFixed(2) : Math.round(v)) + ' ' + u;
-  document.getElementById('v-wave').textContent = WAVES[st.wave];
-  KNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(st[key], unit));
+  KNOBS.forEach(([key, , , , , , , , unit]) => { if (key) document.getElementById('v-' + key).textContent = fmt(st[key], unit); });
   document.getElementById('v-root').textContent = NOTE_NAMES[st.root];
   document.getElementById('v-oct').textContent = st.oct;
+  document.getElementById('t-wave').textContent = WAVES[st.wave];
+  document.getElementById('t-play').textContent = st.playing ? '再生中' : '停止';
   [0, 1, 2, 3].forEach(i => document.querySelector(`[data-act="v${i}"]`).classList.toggle('on', st.voices[i]));
-  document.getElementById('play').classList.toggle('on', st.playing);
+  document.querySelector('[data-act="play"]').classList.toggle('on', st.playing);
 }
 
 document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => run(b.dataset.act));
