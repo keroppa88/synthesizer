@@ -29,40 +29,25 @@
   <h1>DRONE SYNTHESIZER</h1>
 
   <section>
-    <button id="play" data-act="play">▶ 再生 / 停止<kbd>Space</kbd></button>
-  </section>
-
-  <section>
-    <h2>声部（ON/OFF）</h2>
+    <h2>切替（数字キー）</h2>
+    <button id="play" data-act="play">▶ 再生 / 停止<kbd>0</kbd></button>
     <div class="row">
       <button data-act="v0">低音（-1oct）<kbd>1</kbd></button>
       <button data-act="v1">基音<kbd>2</kbd></button>
       <button data-act="v2">5度<kbd>3</kbd></button>
       <button data-act="v3">オクターブ<kbd>4</kbd></button>
     </div>
-  </section>
-
-  <section>
-    <h2>音程・音色</h2>
-    <div class="row"><span class="name">基音</span>
-      <button data-act="root-">−<kbd>←</kbd></button><button data-act="root+">＋<kbd>→</kbd></button>
-      <span class="val" id="v-root"></span></div>
-    <div class="row"><span class="name">オクターブ</span>
-      <button data-act="oct-">−<kbd>Z</kbd></button><button data-act="oct+">＋<kbd>X</kbd></button>
-      <span class="val" id="v-oct"></span></div>
-    <div class="row"><span class="name">波形</span>
-      <button data-act="wave">切替<kbd>V</kbd></button>
-      <span class="val" id="v-wave"></span></div>
-  </section>
-
-  <section>
-    <h2>つまみ</h2>
-    <div id="knobs"></div>
-  </section>
-
-  <section>
-    <button data-act="help">ショートカット一覧<kbd>/</kbd></button>
+    <div class="row">
+      <button data-act="wave">波形<kbd>5</kbd></button>
+      <span class="val" id="v-wave"></span>
+      <button data-act="help">ショートカット一覧<kbd>9</kbd></button>
+    </div>
     <div id="help"></div>
+  </section>
+
+  <section>
+    <h2>つまみ（上段キー＝上げる／下段キー＝下げる）</h2>
+    <div id="knobs"></div>
   </section>
 </main>
 
@@ -72,19 +57,23 @@ const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const WAVES = ['sawtooth','triangle','square','sine'];
 const VOICE_RATIOS = [0.5, 1, 1.5, 2];          // 低音・基音・5度・オクターブ
 
-// つまみ: [キー名, 表示名, 下げるキー, 上げるキー, 最小, 最大, 初期値, 1回の変化量, 単位]
+// つまみ: [キー名, 表示名, 上げるキー, 下げるキー, 最小, 最大, 初期値, 1回の変化量, 単位]
+// 変化量が 1より大きく2未満 → 掛け算で変化（周波数系）
 const KNOBS = [
-  ['cutoff', 'フィルター',  'A', 'Q', 60,  8000, 900,  1.15, 'Hz'],
-  ['reso',   '共鳴',        'S', 'W', 0,   25,   4,    1,    ''],
-  ['detune', 'うなり',      'D', 'E', 0,   30,   7,    1,    'cent'],
-  ['lfoRate','揺れ速さ',    'F', 'R', 0.02,5,    0.1,  1.3,  'Hz'],
-  ['lfoAmt', '揺れ深さ',    'G', 'T', 0,   3000, 400,  100,  'Hz'],
-  ['reverb', '残響',        'H', 'Y', 0,   1,    0.5,  0.05, ''],
-  ['volume', '音量',        '↓', '↑', 0,   1,    0.5,  0.05, ''],
+  ['root',   '基音',        'Q', 'A', 0,   11,   2,    1,    ''],
+  ['oct',    'オクターブ',  'W', 'S', 0,   5,    2,    1,    ''],
+  ['cutoff', 'フィルター',  'E', 'D', 60,  8000, 900,  1.15, 'Hz'],
+  ['reso',   '共鳴',        'R', 'F', 0,   25,   4,    1,    ''],
+  ['detune', 'うなり',      'T', 'G', 0,   30,   7,    1,    'cent'],
+  ['lfoRate','揺れ速さ',    'Y', 'H', 0.02,5,    0.1,  1.3,  'Hz'],
+  ['lfoAmt', '揺れ深さ',    'U', 'J', 0,   3000, 400,  100,  'Hz'],
+  ['reverb', '残響',        'I', 'K', 0,   1,    0.5,  0.05, ''],
+  ['volume', '音量',        'O', 'L', 0,   1,    0.5,  0.05, ''],
+  // P / ; は空き
 ];
 
 // ===== 状態 =====
-const st = { playing: false, root: 2, oct: 2, wave: 0, voices: [true, true, true, false] };
+const st = { playing: false, wave: 0, voices: [true, true, true, false] };
 KNOBS.forEach(k => st[k[0]] = k[6]);
 
 // ===== 音の仕組み =====
@@ -144,28 +133,27 @@ function applyAll() {
 // ===== 操作 =====
 const ACTIONS = {
   play()  { if (!ac) setupAudio(); st.playing = !st.playing; ac.resume(); },
-  'root-'() { st.root = (st.root + 11) % 12; },
-  'root+'() { st.root = (st.root + 1) % 12; },
-  'oct-'()  { st.oct = Math.max(0, st.oct - 1); },
-  'oct+'()  { st.oct = Math.min(5, st.oct + 1); },
   wave()  { st.wave = (st.wave + 1) % WAVES.length; },
   help()  { document.getElementById('help').classList.toggle('show'); },
 };
 [0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => st.voices[i] = !st.voices[i]);
 
 KNOBS.forEach(([key, , , , min, max, , step]) => {
-  const mul = step > 1 && max > 100 && key !== 'lfoAmt';         // 周波数系は掛け算で変化
-  ACTIONS[key + '-'] = () => st[key] = Math.max(min, mul ? st[key] / step : st[key] - step);
+  const mul = step > 1 && step < 2;
   ACTIONS[key + '+'] = () => st[key] = Math.min(max, mul ? st[key] * step : st[key] + step);
+  ACTIONS[key + '-'] = () => st[key] = Math.max(min, mul ? st[key] / step : st[key] - step);
 });
+// 基音は B の次が C に戻る（ぐるっと一周）
+ACTIONS['root+'] = () => st.root = (st.root + 1) % 12;
+ACTIONS['root-'] = () => st.root = (st.root + 11) % 12;
 
 // キー → 操作
 const KEYMAP = {
-  Space: 'play', Digit1: 'v0', Digit2: 'v1', Digit3: 'v2', Digit4: 'v3',
-  ArrowLeft: 'root-', ArrowRight: 'root+', KeyZ: 'oct-', KeyX: 'oct+', KeyV: 'wave', Slash: 'help',
+  Digit0: 'play', Space: 'play', Digit1: 'v0', Digit2: 'v1', Digit3: 'v2', Digit4: 'v3',
+  Digit5: 'wave', Digit9: 'help',
 };
-const codeOf = k => k === '↑' ? 'ArrowUp' : k === '↓' ? 'ArrowDown' : 'Key' + k;
-KNOBS.forEach(([key, , down, up]) => { KEYMAP[codeOf(down)] = key + '-'; KEYMAP[codeOf(up)] = key + '+'; });
+const codeOf = k => k === ';' ? 'Semicolon' : 'Key' + k;
+KNOBS.forEach(([key, , up, down]) => { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; });
 
 function run(act) {
   ACTIONS[act](); applyAll(); render();
@@ -174,9 +162,9 @@ function run(act) {
 }
 
 // ===== 画面 =====
-document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, down, up]) =>
+document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =>
   `<div class="row"><span class="name">${name}</span>
-   <button data-act="${key}-">−<kbd>${down}</kbd></button><button data-act="${key}+">＋<kbd>${up}</kbd></button>
+   <button data-act="${key}+">＋<kbd>${up}</kbd></button><button data-act="${key}-">−<kbd>${down}</kbd></button>
    <span class="val" id="v-${key}"></span></div>`).join('');
 
 // ショートカット一覧（全ボタンから自動で作る）
@@ -187,10 +175,10 @@ document.getElementById('help').innerHTML = [...document.querySelectorAll('butto
 
 function render() {
   const fmt = (v, u) => (v < 10 ? v.toFixed(2) : Math.round(v)) + ' ' + u;
-  document.getElementById('v-root').textContent = NOTE_NAMES[st.root];
-  document.getElementById('v-oct').textContent = st.oct;
   document.getElementById('v-wave').textContent = WAVES[st.wave];
   KNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(st[key], unit));
+  document.getElementById('v-root').textContent = NOTE_NAMES[st.root];
+  document.getElementById('v-oct').textContent = st.oct;
   [0, 1, 2, 3].forEach(i => document.querySelector(`[data-act="v${i}"]`).classList.toggle('on', st.voices[i]));
   document.getElementById('play').classList.toggle('on', st.playing);
 }
