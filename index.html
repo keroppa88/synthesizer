@@ -10,6 +10,7 @@
   h1 { font-size: 20px; letter-spacing: .1em; color: #e8b86a; }
   section { border: 1px solid #2a2a30; border-radius: 8px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }
   h2 { font-size: 13px; color: #888; margin: 0 0 8px; }
+  h2 b { color: #e8b86a; }
 
   /* キーボードと同じ並び：10列 */
   .grid { display: grid; grid-template-columns: repeat(10, minmax(72px, 1fr)); gap: 6px; }
@@ -22,6 +23,7 @@
            padding: 8px 4px; font-size: 14px; cursor: pointer; }
   button:disabled { cursor: default; }
   button.on { background: #6b4a1a; border-color: #e8b86a; }
+  button.sel { outline: 3px solid #fff; outline-offset: 1px; }
   button.flash { background: #e8b86a; color: #000; }
   kbd { display: block; font-size: 15px; font-weight: bold; color: #fff; }
   button.flash kbd { color: #000; }
@@ -34,14 +36,19 @@
   <h1>DRONE SYNTHESIZER</h1>
 
   <section>
-    <h2>切替</h2>
+    <h2>切替（<b id="h-track1"></b>）</h2>
     <div class="grid" id="toggles"></div>
     <div id="help"></div>
   </section>
 
   <section>
-    <h2>つまみ（上キー＝上げる／下キー＝下げる）</h2>
+    <h2>つまみ（<b id="h-track2"></b>）上キー＝上げる／下キー＝下げる</h2>
     <div class="grid" id="knobs"></div>
+  </section>
+
+  <section>
+    <h2>トラック選択</h2>
+    <div class="grid" id="tracks"></div>
   </section>
 </main>
 
@@ -50,17 +57,19 @@
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const WAVES = ['sawtooth','triangle','square','sine'];
 const VOICE_RATIOS = [0.5, 1, 1.5, 2];          // 低音・基音・5度・オクターブ
+const TRACK_KEYS = ['Z', 'X', 'C', 'V', 'B', 'N'];
 
 // 切替: [数字キー, 操作名, 表示名]（キーボードの並び順。操作名なし＝空き）
 const TOGGLES = [
-  ['1', 'v0',   '低音'],
-  ['2', 'v1',   '基音'],
-  ['3', 'v2',   '5度'],
-  ['4', 'v3',   'オクターブ'],
-  ['5', 'wave', '波形'],
-  ['6'], ['7'], ['8'],
-  ['9', 'help', '一覧'],
-  ['0', 'play', '再生/停止'],
+  ['1', 'v0',    '低音'],
+  ['2', 'v1',    '基音'],
+  ['3', 'v2',    '5度'],
+  ['4', 'v3',    'オクターブ'],
+  ['5', 'wave',  '波形'],
+  ['6', 'track', 'トラックON/OFF'],
+  ['7'], ['8'],
+  ['9', 'help',  '一覧'],
+  ['0', 'play',  '再生/停止'],
 ];
 
 // つまみ: [キー名, 表示名, 上げるキー, 下げるキー, 最小, 最大, 初期値, 1回の変化量, 単位]
@@ -79,11 +88,17 @@ const KNOBS = [
 ];
 
 // ===== 状態 =====
-const st = { playing: false, wave: 0, voices: [true, true, true, false] };
-KNOBS.forEach(k => { if (k[0]) st[k[0]] = k[6]; });
+// トラックごとに全設定を持つ。最初はトラック1だけON
+const tracks = TRACK_KEYS.map((_, i) => {
+  const t = { on: i === 0, wave: 0, voices: [true, true, true, false] };
+  KNOBS.forEach(k => { if (k[0]) t[k[0]] = k[6]; });
+  return t;
+});
+const st = { playing: false, sel: 0 };
+const cur = () => tracks[st.sel];                 // いま操作中のトラック
 
 // ===== 音の仕組み =====
-let ac, filter, lfo, lfoGain, dry, wet, master, voices = [];
+let ac, master, reverbIn, nodes = [];
 
 function makeReverb() {
   const len = ac.sampleRate * 5, buf = ac.createBuffer(2, len, ac.sampleRate);
@@ -94,71 +109,86 @@ function makeReverb() {
   const conv = ac.createConvolver(); conv.buffer = buf; return conv;
 }
 
-function setupAudio() {
-  ac = new AudioContext();
-  filter = ac.createBiquadFilter(); filter.type = 'lowpass';
-  lfo = ac.createOscillator(); lfoGain = ac.createGain();
-  lfo.connect(lfoGain).connect(filter.frequency); lfo.start();
-  dry = ac.createGain(); wet = ac.createGain(); master = ac.createGain();
-  master.gain.value = 0;
-  const rev = makeReverb();
-  filter.connect(dry).connect(master);
-  filter.connect(rev).connect(wet).connect(master);
-  master.connect(ac.destination);
-
-  voices = VOICE_RATIOS.map(() => {
-    const g = ac.createGain(); g.gain.value = 0; g.connect(filter);
+// 1トラック分：声部4つ → フィルター → 出口 → (そのまま / 残響へ)
+function makeTrackNodes() {
+  const n = {
+    filter: ac.createBiquadFilter(), lfo: ac.createOscillator(), lfoGain: ac.createGain(),
+    out: ac.createGain(), dry: ac.createGain(), send: ac.createGain(),
+  };
+  n.filter.type = 'lowpass';
+  n.lfo.connect(n.lfoGain).connect(n.filter.frequency); n.lfo.start();
+  n.out.gain.value = 0;
+  n.filter.connect(n.out);
+  n.out.connect(n.dry).connect(master);
+  n.out.connect(n.send).connect(reverbIn);
+  n.voices = VOICE_RATIOS.map(() => {
+    const g = ac.createGain(); g.gain.value = 0; g.connect(n.filter);
     const oscs = [0, 1].map(() => { const o = ac.createOscillator(); o.connect(g); o.start(); return o; });
     return { g, oscs };
   });
+  return n;
+}
+
+function setupAudio() {
+  ac = new AudioContext();
+  master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+  reverbIn = makeReverb(); reverbIn.connect(master);
+  nodes = tracks.map(makeTrackNodes);
   applyAll();
 }
 
-function baseFreq() { return 440 * Math.pow(2, (st.root + 12 * (st.oct + 1) - 69) / 12); }
+function applyTrack(tr, n) {
+  const t = ac.currentTime;
+  const f = 440 * Math.pow(2, (tr.root + 12 * (tr.oct + 1) - 69) / 12);
+  n.voices.forEach((v, i) => {
+    v.oscs.forEach((o, j) => {
+      o.type = WAVES[tr.wave];
+      o.frequency.setTargetAtTime(f * VOICE_RATIOS[i], t, 0.3);   // ゆっくり音程移動
+      o.detune.setTargetAtTime(j ? tr.detune : -tr.detune, t, 0.1);
+    });
+    v.g.gain.setTargetAtTime(tr.voices[i] ? 0.2 : 0, t, 0.8);      // ふわっと出入り
+  });
+  n.filter.frequency.setTargetAtTime(tr.cutoff, t, 0.1);
+  n.filter.Q.setTargetAtTime(tr.reso, t, 0.1);
+  n.lfo.frequency.setTargetAtTime(tr.lfoRate, t, 0.1);
+  n.lfoGain.gain.setTargetAtTime(tr.lfoAmt, t, 0.1);
+  n.dry.gain.setTargetAtTime(1 - tr.reverb * 0.7, t, 0.1);
+  n.send.gain.setTargetAtTime(tr.reverb * 1.5, t, 0.1);
+  n.out.gain.setTargetAtTime(tr.on ? tr.volume : 0, t, 1);         // トラックON/OFFもふわっと
+}
 
 function applyAll() {
   if (!ac) return;
-  const t = ac.currentTime, f = baseFreq();
-  voices.forEach((v, i) => {
-    v.oscs.forEach((o, j) => {
-      o.type = WAVES[st.wave];
-      o.frequency.setTargetAtTime(f * VOICE_RATIOS[i], t, 0.3);   // ゆっくり音程移動
-      o.detune.setTargetAtTime(j ? st.detune : -st.detune, t, 0.1);
-    });
-    v.g.gain.setTargetAtTime(st.voices[i] ? 0.2 : 0, t, 0.8);      // ふわっと出入り
-  });
-  filter.frequency.setTargetAtTime(st.cutoff, t, 0.1);
-  filter.Q.setTargetAtTime(st.reso, t, 0.1);
-  lfo.frequency.setTargetAtTime(st.lfoRate, t, 0.1);
-  lfoGain.gain.setTargetAtTime(st.lfoAmt, t, 0.1);
-  dry.gain.setTargetAtTime(1 - st.reverb * 0.7, t, 0.1);
-  wet.gain.setTargetAtTime(st.reverb * 1.5, t, 0.1);
-  master.gain.setTargetAtTime(st.playing ? st.volume : 0, t, st.playing ? 1 : 0.5);
+  tracks.forEach((tr, i) => applyTrack(tr, nodes[i]));
+  master.gain.setTargetAtTime(st.playing ? 0.6 : 0, ac.currentTime, st.playing ? 1 : 0.5);
 }
 
 // ===== 操作 =====
 const ACTIONS = {
   play()  { if (!ac) setupAudio(); st.playing = !st.playing; ac.resume(); },
-  wave()  { st.wave = (st.wave + 1) % WAVES.length; },
+  wave()  { cur().wave = (cur().wave + 1) % WAVES.length; },
+  track() { cur().on = !cur().on; },
   help()  { document.getElementById('help').classList.toggle('show'); },
 };
-[0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => st.voices[i] = !st.voices[i]);
+[0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => cur().voices[i] = !cur().voices[i]);
+TRACK_KEYS.forEach((_, i) => ACTIONS['sel' + i] = () => st.sel = i);
 
 KNOBS.forEach(([key, , , , min, max, , step]) => {
   if (!key) return;
   const mul = step > 1 && step < 2;
-  ACTIONS[key + '+'] = () => st[key] = Math.min(max, mul ? st[key] * step : st[key] + step);
-  ACTIONS[key + '-'] = () => st[key] = Math.max(min, mul ? st[key] / step : st[key] - step);
+  ACTIONS[key + '+'] = () => cur()[key] = Math.min(max, mul ? cur()[key] * step : cur()[key] + step);
+  ACTIONS[key + '-'] = () => cur()[key] = Math.max(min, mul ? cur()[key] / step : cur()[key] - step);
 });
 // 基音は B の次が C に戻る（ぐるっと一周）
-ACTIONS['root+'] = () => st.root = (st.root + 1) % 12;
-ACTIONS['root-'] = () => st.root = (st.root + 11) % 12;
+ACTIONS['root+'] = () => cur().root = (cur().root + 1) % 12;
+ACTIONS['root-'] = () => cur().root = (cur().root + 11) % 12;
 
 // キー → 操作
 const KEYMAP = { Space: 'play' };
-TOGGLES.forEach(([k, act]) => { if (act) KEYMAP['Digit' + k] = act; });
 const codeOf = k => k === ';' ? 'Semicolon' : 'Key' + k;
+TOGGLES.forEach(([k, act]) => { if (act) KEYMAP['Digit' + k] = act; });
 KNOBS.forEach(([key, , up, down]) => { if (key) { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; } });
+TRACK_KEYS.forEach((k, i) => KEYMAP[codeOf(k)] = 'sel' + i);
 
 function run(act) {
   ACTIONS[act](); applyAll(); render();
@@ -184,21 +214,42 @@ document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =
      ${btn(key && key + '-', down, '−')}
    </div>`).join('');
 
+document.getElementById('tracks').innerHTML = TRACK_KEYS.map((k, i) =>
+  `<div class="col">
+     ${btn('sel' + i, k, 'トラック' + (i + 1))}
+     <span class="val" id="s-${i}"></span>
+   </div>`).join('');
+
 // ショートカット一覧
 document.getElementById('help').innerHTML =
   TOGGLES.filter(t => t[1]).map(([k, , n]) => `<div>${k}：${n}</div>`).join('') +
   KNOBS.filter(k => k[0]).map(([, n, u, d]) => `<div>${u} / ${d}：${n}</div>`).join('') +
-  '<div>Space：再生/停止</div>';
+  `<div>${TRACK_KEYS.join(' ')}：トラック1〜6を選ぶ</div><div>Space：再生/停止</div>`;
 
 function render() {
+  const tr = cur();
   const fmt = (v, u) => (v < 10 ? v.toFixed(2) : Math.round(v)) + ' ' + u;
-  KNOBS.forEach(([key, , , , , , , , unit]) => { if (key) document.getElementById('v-' + key).textContent = fmt(st[key], unit); });
-  document.getElementById('v-root').textContent = NOTE_NAMES[st.root];
-  document.getElementById('v-oct').textContent = st.oct;
-  document.getElementById('t-wave').textContent = WAVES[st.wave];
+  const label = 'トラック' + (st.sel + 1);
+  document.getElementById('h-track1').textContent = label;
+  document.getElementById('h-track2').textContent = label;
+
+  KNOBS.forEach(([key, , , , , , , , unit]) => { if (key) document.getElementById('v-' + key).textContent = fmt(tr[key], unit); });
+  document.getElementById('v-root').textContent = NOTE_NAMES[tr.root];
+  document.getElementById('v-oct').textContent = tr.oct;
+  document.getElementById('t-wave').textContent = WAVES[tr.wave];
+  document.getElementById('t-track').textContent = tr.on ? 'ON' : 'OFF';
   document.getElementById('t-play').textContent = st.playing ? '再生中' : '停止';
-  [0, 1, 2, 3].forEach(i => document.querySelector(`[data-act="v${i}"]`).classList.toggle('on', st.voices[i]));
+  [0, 1, 2, 3].forEach(i => document.querySelector(`[data-act="v${i}"]`).classList.toggle('on', tr.voices[i]));
+  document.querySelector('[data-act="track"]').classList.toggle('on', tr.on);
   document.querySelector('[data-act="play"]').classList.toggle('on', st.playing);
+
+  // トラック一覧：ON は色付き、選択中は白枠、下に基音とオクターブ
+  tracks.forEach((t, i) => {
+    const b = document.querySelector(`[data-act="sel${i}"]`);
+    b.classList.toggle('on', t.on);
+    b.classList.toggle('sel', i === st.sel);
+    document.getElementById('s-' + i).textContent = NOTE_NAMES[t.root] + t.oct;
+  });
 }
 
 document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => run(b.dataset.act));
