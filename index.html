@@ -75,6 +75,12 @@
     <div class="grid" id="knobs"></div>
   </section>
 
+  <section id="melSec">
+    <h2>メロディー音色（<b class="h-track"></b>）Shift ＋ キー　※鍵盤・コードの音に効く</h2>
+    <div class="grid" id="mtoggles" style="margin-bottom:8px"></div>
+    <div class="grid" id="mknobs"></div>
+  </section>
+
   <section id="pianoSec">
     <h2>鍵盤（<b class="h-track"></b>・<b id="h-pmode"></b>）<span id="v-poct"></span></h2>
     <div class="piano" id="piano"></div>
@@ -134,6 +140,27 @@ const KNOBS = [
   ['tempo',  'テンポ',      'P', ';', 40,  200,  70,   2,    'BPM'],   // テンポだけ全トラック共通
 ];
 
+// メロディー音色（Shift + キー）。鍵盤・コードの音だけに効く
+const MKNOBS = [
+  ['attack',  '立ち上がり',     'Q', 'A', 0.005, 4,    0.06, 1.4,  's'],
+  ['decay',   '減衰',           'W', 'S', 0.01,  4,    0.3,  1.4,  's'],
+  ['sustain', '持続',           'E', 'D', 0,     1,    1,    0.05, ''],
+  ['release', '余韻',           'R', 'F', 0.05,  8,    1.2,  1.4,  's'],
+  ['porta',   'ポルタメント',   'T', 'G', 0,     2,    0,    0.05, 's'],
+  ['vibDepth','ビブラート深さ', 'Y', 'H', 0,     100,  0,    5,    'cent'],
+  ['vibRate', 'ビブラート速さ', 'U', 'J', 0.5,   12,   5,    1.2,  'Hz'],
+  ['filtEnv', 'フィルター動き', 'I', 'K', 0,     6000, 0,    200,  'Hz'],
+  ['noise',   'ノイズ',         'O', 'L', 0,     1,    0,    0.05, ''],
+  ['sub',     'サブ音',         'P', ';', 0,     1,    0,    0.05, ''],
+];
+const ARPS = ['なし', '上昇', '下降', '上下', 'ランダム'];
+const ARP_RATES = [['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125]];
+const MTOGGLES = [
+  ['1', 'mono',    '単音/和音'],
+  ['2', 'arp',     'アルペジオ'],
+  ['3', 'arpRate', 'アルペジオ速さ'],
+];
+
 // ===== 鍵盤（演奏モード）=====
 // 下段：A=オクターブ下げ、S〜L=白鍵、;=オクターブ上げ。上段：E R Y U I=黒鍵
 const PIANO_TOP = ['Q','W','E','R','T','Y','U','I','O','P'];
@@ -158,8 +185,9 @@ const CHORD_Q = { '': [0,4,7], m: [0,3,7], dim: [0,3,6], aug: [0,4,8], sus2: [0,
 
 // ===== 状態 =====
 function newTrack(i) {
-  const t = { on: i === 0, wave: 0, voices: [true, true, true, false], mode: 0, events: [] };
-  KNOBS.forEach(k => { if (k[0] !== 'tempo') t[k[0]] = k[6]; });
+  const t = { on: i === 0, wave: 0, voices: [true, true, true, false], mode: 0, events: [],
+              mono: false, arp: 0, arpRate: 1 };
+  [...KNOBS, ...MKNOBS].forEach(k => { if (k[0] !== 'tempo') t[k[0]] = k[6]; });
   return t;
 }
 const tracks = TRACK_KEYS.map((_, i) => newTrack(i));
@@ -270,8 +298,10 @@ function setupAudio() {
   master = ac.createGain(); master.gain.value = 0.6; master.connect(ac.destination);
   reverbIn = makeReverb(); reverbIn.connect(master);
   nodes = tracks.map(makeTrackNodes);
+  noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  noiseBuf.getChannelData(0).forEach((_, i, d) => d[i] = Math.random() * 2 - 1);
   applyAll();
-  setInterval(schedule, 25);
+  setInterval(() => { schedule(); liveArp(); }, 25);
 }
 
 function applyTrack(tr, n) {
@@ -300,23 +330,97 @@ function applyAll() {
   tracks.forEach((tr, i) => applyTrack(tr, nodes[i]));
 }
 
-// 鍵盤の1音（またはコード）を鳴らす／止める
-function noteOn(ti, midis, t) {
-  const tr = tracks[ti], g = ac.createGain(), oscs = [];
-  g.gain.setValueAtTime(0, t);
-  g.gain.linearRampToValueAtTime(0.25 / Math.sqrt(midis.length), t + 0.06);
-  g.connect(nodes[ti].filter);
-  midis.forEach(m => [-1, 1].forEach(s => {
-    const o = ac.createOscillator();
-    o.type = WAVES[tr.wave]; o.frequency.value = mtof(m); o.detune.value = s * tr.detune;
-    o.connect(g); o.start(t); oscs.push(o);
-  }));
-  return { g, oscs };
+// ===== メロディーの1音（またはコード）=====
+// 音源（波形2本＋サブ音＋ノイズ）→ 音ごとのフィルター → 音量の山（ADSR）→ トラックの出口
+const rt = tracks.map(() => ({ last: null, mono: null }));   // 直前の音程（ポルタメント用）と単音モードの音
+let noiseBuf;
+
+function voiceOn(ti, midis, t) {
+  const tr = tracks[ti], n = nodes[ti];
+  if (tr.mono && rt[ti].mono) voiceOff(rt[ti].mono, t, true);     // 単音：前の音をすぐ切る
+
+  const filt = ac.createBiquadFilter(), amp = ac.createGain(), srcs = [];
+  const tcDecay = tr.decay / 3 + 0.001;
+  // フィルター動き：弾いた瞬間に開いて、減衰の速さで元に戻る
+  filt.type = 'lowpass'; filt.Q.value = tr.reso;
+  filt.frequency.setValueAtTime(Math.min(18000, tr.cutoff + tr.filtEnv), t);
+  filt.frequency.setTargetAtTime(tr.cutoff, t + tr.attack, tcDecay);
+  n.lfoGain.connect(filt.frequency);                               // トラックの「揺れ」も効かせる
+  filt.connect(amp).connect(n.out);
+
+  // 音量の山：立ち上がり → 減衰 → 持続
+  const peak = 0.25 / Math.sqrt(midis.length);
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(peak, t + tr.attack);
+  amp.gain.setTargetAtTime(peak * tr.sustain, t + tr.attack, tcDecay);
+
+  // ビブラート
+  const vib = ac.createOscillator(), vibG = ac.createGain();
+  vib.frequency.value = tr.vibRate; vibG.gain.value = tr.vibDepth;
+  vib.connect(vibG); vib.start(t); srcs.push(vib);
+
+  const prev = rt[ti].last;
+  midis.forEach((m, i) => {
+    // ポルタメント：直前の音程から滑ってくる
+    const from = tr.porta > 0 && prev ? prev[Math.min(i, prev.length - 1)] : m;
+    const osc = (type, mm, det, dest) => {
+      const o = ac.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(mtof(from + mm - m), t);
+      if (from !== m) o.frequency.exponentialRampToValueAtTime(mtof(mm), t + tr.porta);
+      o.detune.value = det; vibG.connect(o.detune);
+      o.connect(dest); o.start(t); srcs.push(o);
+    };
+    [-1, 1].forEach(s => osc(WAVES[tr.wave], m, s * tr.detune, filt));
+    if (tr.sub > 0) {                                              // サブ音：1オクターブ下のサイン波
+      const sg = ac.createGain(); sg.gain.value = tr.sub; sg.connect(filt);
+      osc('sine', m - 12, 0, sg);
+    }
+  });
+  if (tr.noise > 0) {                                              // ノイズ：風・息の成分
+    const ns = ac.createBufferSource(), ng = ac.createGain();
+    ns.buffer = noiseBuf; ns.loop = true; ng.gain.value = tr.noise * 0.5;
+    ns.connect(ng).connect(filt); ns.start(t); srcs.push(ns);
+  }
+
+  rt[ti].last = midis;
+  const v = { ti, filt, amp, srcs, rel: tr.release };
+  if (tr.mono) rt[ti].mono = v;
+  return v;
 }
-function noteOff(h, t) {
-  if (h.g.gain.cancelAndHoldAtTime) h.g.gain.cancelAndHoldAtTime(t);
-  h.g.gain.setTargetAtTime(0, t, 0.4);                              // 余韻を残して消える
-  h.oscs.forEach(o => o.stop(t + 3));
+function voiceOff(v, t, fast) {
+  if (v.off !== undefined && v.off <= t) return;                   // もっと早く止める予定がある
+  v.off = t;
+  const g = v.amp.gain;
+  if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else g.cancelScheduledValues(t);
+  const tc = fast ? 0.02 : v.rel / 3 + 0.001;                      // 余韻
+  g.setTargetAtTime(0, t, tc);
+  const end = t + tc * 8;
+  v.srcs.forEach(s => { try { s.stop(end); } catch (e) {} });
+  setTimeout(() => { try { nodes[v.ti].lfoGain.disconnect(v.filt.frequency); } catch (e) {} },
+             (end - ac.currentTime) * 1000 + 300);
+}
+
+// アルペジオ：コードの音を順番に鳴らす
+function arpSeq(midis, mode) {
+  const s = [...midis].sort((a, b) => a - b);
+  if (mode === 2) return s.reverse();
+  if (mode === 3) return s.concat(s.slice(1, -1).reverse());
+  return s;
+}
+const arpPick = (seq, i, mode) => mode === 4 ? seq[Math.floor(Math.random() * seq.length)] : seq[i % seq.length];
+const arpStep = tr => ARP_RATES[tr.arpRate][1] * beatSec();
+
+// 決まった長さの音を鳴らす（ループ再生用）
+function playEvent(ti, midis, t, dur) {
+  const tr = tracks[ti];
+  if (tr.arp && midis.length > 1) {
+    const step = arpStep(tr), seq = arpSeq(midis, tr.arp);
+    for (let i = 0; t + i * step < t + dur - 1e-4; i++) {
+      const s = t + i * step;
+      voiceOff(voiceOn(ti, [arpPick(seq, i, tr.arp)], s), Math.min(s + step * 0.9, t + dur));
+    }
+  } else voiceOff(voiceOn(ti, midis, t), t + dur);
 }
 function click(t, accent) {                                         // 録音中のメトロノーム
   const o = ac.createOscillator(), g = ac.createGain();
@@ -339,7 +443,7 @@ function schedule() {
     tracks.forEach((tr, ti) => tr.events.forEach(ev => {
       if (ev.skip === k || ev.pos >= Lb) return;                    // 録ったばかりの周回は鳴らさない
       const t = t0 + ev.pos * beat;
-      if (t >= a && t < b) noteOff(noteOn(ti, notesOf(ev), t), t + ev.dur * beat);
+      if (t >= a && t < b) playEvent(ti, notesOf(ev), t, ev.dur * beat);
     }));
     if (st.rec) for (let i = 0; i < Lb; i++) {
       const t = t0 + i * beat;
@@ -358,14 +462,30 @@ function pianoDown(k) {
   if (!desc || held[k]) return;
   setupAudio(); ac.resume();
   if (!cur().on) { cur().on = true; applyAll(); }   // OFF のトラックで弾いたら自動で ON
-  held[k] = { h: noteOn(st.sel, notesOf(desc), ac.currentTime), t0: ac.currentTime, desc, ti: st.sel, rec: st.rec };
+  const now = ac.currentTime, tr = cur(), midis = notesOf(desc);
+  const x = { t0: now, desc, ti: st.sel, rec: st.rec, midis };
+  if (tr.arp && midis.length > 1) { x.arp = arpSeq(midis, tr.arp); x.i = 0; x.next = now; liveArp(); }
+  else x.v = voiceOn(st.sel, midis, now);
+  held[k] = x;
 }
 function pianoUp(k) {
   const x = held[k];
   if (!x) return;
   delete held[k];
-  noteOff(x.h, ac.currentTime);
+  if (x.v) voiceOff(x.v, ac.currentTime);
   if (x.rec && st.rec) recordNote(x, ac.currentTime);
+}
+// 押している間のアルペジオを少し先まで予約
+function liveArp() {
+  const b = ac.currentTime + 0.1;
+  Object.values(held).forEach(x => {
+    if (!x.arp) return;
+    const tr = tracks[x.ti], step = arpStep(tr);
+    while (x.next < b) {
+      voiceOff(voiceOn(x.ti, [arpPick(x.arp, x.i, tr.arp)], x.next), x.next + step * 0.9);
+      x.i++; x.next += step;
+    }
+  });
 }
 function releaseAll() { Object.keys(held).forEach(pianoUp); }
 
@@ -409,7 +529,15 @@ const ACTIONS = {
   help()  { document.getElementById('help').classList.toggle('show'); },
   pmode() { releaseAll(); st.playMode = !st.playMode; },
   clear() { cur().events = []; renderTimeline(); },
+  mono()    { cur().mono = !cur().mono; },
+  arp()     { cur().arp = (cur().arp + 1) % ARPS.length; },
+  arpRate() { cur().arpRate = (cur().arpRate + 1) % ARP_RATES.length; },
 };
+MKNOBS.forEach(([key, , , , min, max, , step]) => {
+  const mul = step > 1 && step < 2;
+  ACTIONS[key + '+'] = () => cur()[key] = Math.min(max, mul ? cur()[key] * step : cur()[key] + step);
+  ACTIONS[key + '-'] = () => cur()[key] = Math.max(min, mul ? cur()[key] / step : cur()[key] - step);
+});
 [0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => cur().voices[i] = !cur().voices[i]);
 TRACK_KEYS.forEach((_, i) => ACTIONS['sel' + i] = () => { releaseAll(); st.sel = i; renderTimeline(); });
 
@@ -431,6 +559,10 @@ const keyOf = code => code === 'Semicolon' ? ';' : code.startsWith('Key') ? code
 TOGGLES.forEach(([k, act]) => { if (act) KEYMAP[codeOf(k)] = act; });
 KNOBS.forEach(([key, , up, down]) => { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; });
 TRACK_KEYS.forEach((k, i) => KEYMAP[codeOf(k)] = 'sel' + i);
+// Shift + キー → メロディー音色
+const SHIFTMAP = {};
+MTOGGLES.forEach(([k, act]) => SHIFTMAP[codeOf(k)] = act);
+MKNOBS.forEach(([key, , up, down]) => { SHIFTMAP[codeOf(up)] = key + '+'; SHIFTMAP[codeOf(down)] = key + '-'; });
 
 function run(act) {
   ACTIONS[act](); applyAll(); render(); save();
@@ -454,6 +586,17 @@ document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =
      <span class="name">${name}</span>
      <span class="val" id="v-${key}"></span>
      ${btn(key + '-', down, '−')}
+   </div>`).join('');
+
+document.getElementById('mtoggles').innerHTML = MTOGGLES.map(([key, act, name]) =>
+  `<div class="col">${btn(act, '⇧' + key, name)}<span class="val" id="t-${act}"></span></div>`).join('');
+
+document.getElementById('mknobs').innerHTML = MKNOBS.map(([key, name, up, down]) =>
+  `<div class="col">
+     ${btn(key + '+', '⇧' + up, '＋')}
+     <span class="name">${name}</span>
+     <span class="val" id="v-${key}"></span>
+     ${btn(key + '-', '⇧' + down, '−')}
    </div>`).join('');
 
 document.getElementById('tracks').innerHTML = TRACK_KEYS.map((k, i) =>
@@ -483,6 +626,8 @@ document.querySelectorAll('[data-pk]').forEach(b => {
 document.getElementById('help').innerHTML =
   TOGGLES.filter(t => t[1]).map(([k, , n]) => `<div>${k}：${n}</div>`).join('') +
   KNOBS.map(([, n, u, d]) => `<div>${u} / ${d}：${n}</div>`).join('') +
+  MTOGGLES.map(([k, , n]) => `<div>Shift+${k}：${n}</div>`).join('') +
+  MKNOBS.map(([, n, u, d]) => `<div>Shift+${u} / ${d}：${n}</div>`).join('') +
   `<div>${TRACK_KEYS.join(' ')}：トラック1〜6を選ぶ</div><div>Space：再生/停止</div><div>BS：録音消去</div>
    <div>Tab：演奏モード切替</div><div>演奏モード中：S〜L 白鍵、E R Y U I 黒鍵、A / ; オクターブ</div>`;
 
@@ -492,6 +637,13 @@ function render() {
   document.querySelectorAll('.h-track').forEach(e => e.textContent = 'トラック' + (st.sel + 1));
 
   KNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(tgt(key)[key], unit));
+  MKNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(tr[key], unit));
+  document.getElementById('t-mono').textContent = tr.mono ? '単音' : '和音';
+  document.getElementById('t-arp').textContent = ARPS[tr.arp];
+  document.getElementById('t-arpRate').textContent = ARP_RATES[tr.arpRate][0];
+  document.querySelector('[data-act="mono"]').classList.toggle('on', tr.mono);
+  document.querySelector('[data-act="arp"]').classList.toggle('on', tr.arp > 0);
+  document.getElementById('melSec').classList.toggle('dim', tr.mode === 0);
   document.getElementById('v-root').textContent = NOTE_NAMES[tr.root];
   document.getElementById('v-oct').textContent = tr.oct;
   const tv = (id, s) => document.getElementById('t-' + id).textContent = s;
@@ -591,6 +743,11 @@ document.getElementById('clear').onclick = () => run('clear');
 
 document.addEventListener('keydown', e => {
   if (e.target.isContentEditable) return;           // 文字を書き換えている間は無視
+  if (e.shiftKey && SHIFTMAP[e.code]) {             // Shift + キー：メロディー音色（演奏モード中でも効く）
+    e.preventDefault();
+    if (!e.repeat || /[+-]$/.test(SHIFTMAP[e.code])) run(SHIFTMAP[e.code]);
+    return;
+  }
   const k = keyOf(e.code);
   // 演奏モード中：英字キーは鍵盤（トラック選択 Z〜N と テンポ P は残す）
   if (st.playMode && k && !TRACK_KEYS.includes(k) && k !== 'P') {
