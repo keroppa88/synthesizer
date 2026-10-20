@@ -5,102 +5,110 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drone Synthesizer</title>
 <style>
-  body { margin: 0; background: #0d0d0f; color: #ddd; font-family: system-ui, sans-serif; }
-  main { max-width: 1040px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; letter-spacing: .1em; color: #e8b86a; }
-  section { border: 1px solid #2a2a30; border-radius: 8px; padding: 12px; margin-bottom: 12px; overflow-x: auto; }
+  :root { --bg: #0d0d0f; --panel: #141418; --line: #2a2a30; --btn: #1c1c22; --acc: #e8b86a; --accd: #6b4a1a; --txt: #ddd; --sub: #888; }
+  body { margin: 0; background: var(--bg); color: var(--txt); font-family: system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; overflow-x: auto; }
   section.dim { opacity: .35; }
-  h2 { font-size: 13px; color: #888; margin: 0 0 8px; }
-  h2 b { color: #e8b86a; }
+  h2 { font-size: 12px; color: var(--sub); margin: 0 0 8px; font-weight: normal; }
+  h2 b { color: var(--acc); }
+  .hint { font-size: 11px; color: #666; }
 
-  /* キーボードと同じ並び */
-  .grid { display: grid; grid-template-columns: repeat(10, minmax(72px, 1fr)); gap: 6px; }
-  .grid.g12 { grid-template-columns: repeat(12, minmax(64px, 1fr)); }
-  .col { display: flex; flex-direction: column; gap: 4px; text-align: center; }
-  .col.empty { opacity: .25; }
-  .name { font-size: 12px; color: #aaa; }
-  .val { font-size: 13px; color: #e8b86a; font-variant-numeric: tabular-nums; min-height: 1.2em; }
-
-  button { background: #1c1c22; color: #ddd; border: 1px solid #3a3a44; border-radius: 6px;
-           padding: 8px 4px; font-size: 14px; cursor: pointer; }
-  button:disabled { cursor: default; }
-  button.on { background: #6b4a1a; border-color: #e8b86a; }
+  button { background: var(--btn); color: var(--txt); border: 1px solid #3a3a44; border-radius: 6px;
+           padding: 6px 4px; font-size: 13px; cursor: pointer; }
+  button.on { background: var(--accd); border-color: var(--acc); }
   button.rec.on { background: #8a1c1c; border-color: #ff6060; }
-  button.sel { outline: 3px solid #fff; outline-offset: 1px; }
-  button.flash { background: #e8b86a; color: #000; }
-  kbd { display: block; font-size: 15px; font-weight: bold; color: #fff; }
+  button.flash { background: var(--acc); color: #000; }
+  kbd { display: block; font-size: 13px; font-weight: bold; color: #fff; }
   button.flash kbd { color: #000; }
-  .badge { font-size: 12px; border-radius: 4px; padding: 2px 0; background: #1c1c22; color: #666; }
-  .badge.on { background: #6b4a1a; color: #fff; }
-  .meter { height: 6px; background: #1c1c22; border-radius: 3px; overflow: hidden; }
-  .meter i { display: block; height: 100%; background: #e8b86a; }
-  #help { display: none; font-size: 13px; color: #aaa; margin-top: 8px; columns: 3; }
-  #help.show { display: block; }
+  .val { font-size: 12px; color: var(--acc); font-variant-numeric: tabular-nums; min-height: 1.2em; }
+  .name { font-size: 11px; color: #aaa; }
 
-  /* 鍵盤：上段（黒鍵）を半キー左にずらす */
-  .piano { display: grid; grid-template-columns: repeat(21, minmax(34px, 1fr)); gap: 6px 0; }
-  .pk { margin: 0 3px; height: 64px; display: flex; flex-direction: column; justify-content: space-between; }
-  .pk.white { background: #e9e6df; color: #111; border-color: #999; height: 84px; }
-  .pk.white kbd { color: #111; }
-  .pk.black { background: #111; border-color: #555; }
-  .pk.oct { background: #2a2a34; }
-  .pk.down { background: #e8b86a !important; color: #000; }
-  .pk span { font-size: 13px; }
+  /* ① 再生バー */
+  .transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .transport .item { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 64px; }
+  .transport .lcd { background: #000; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px;
+                    font-variant-numeric: tabular-nums; color: var(--acc); font-size: 18px; min-width: 150px; text-align: center; }
+  .transport .lcd small { display: block; font-size: 10px; color: var(--sub); }
+  .spacer { flex: 1; }
 
-  /* 録音内容（タイムライン） */
-  .tl-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 6px; }
-  .tl-name { width: 70px; flex: none; font-size: 12px; color: #aaa; padding-top: 4px; }
-  .tl-name.sel { color: #fff; font-weight: bold; }
-  .tl { position: relative; flex: 1; min-width: 600px; min-height: 24px; border-radius: 4px; background-color: #15151a; }
-  .ev { position: absolute; height: 20px; background: #6b4a1a; border: 1px solid #e8b86a; border-radius: 3px;
+  /* ② トラック＋録音内容 */
+  .trow { display: flex; gap: 8px; margin-bottom: 4px; align-items: stretch; }
+  .thead { width: 190px; flex: none; display: grid; grid-template-columns: 44px 1fr; gap: 2px 6px; align-items: center;
+           background: var(--btn); border: 1px solid #3a3a44; border-radius: 6px; padding: 4px 6px; cursor: pointer; }
+  .thead.sel { border-color: #fff; box-shadow: 0 0 0 1px #fff; }
+  .thead button { grid-row: span 2; padding: 4px 2px; }
+  .thead .tname { font-size: 12px; }
+  .thead .tinfo { font-size: 11px; color: var(--sub); display: flex; gap: 6px; align-items: center; }
+  .badge { font-size: 10px; border-radius: 3px; padding: 0 4px; background: #222; color: #666; }
+  .badge.on { background: var(--accd); color: #fff; }
+  .meter { grid-column: 1 / 3; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--acc); }
+  .tl { position: relative; flex: 1; min-width: 560px; min-height: 48px; border-radius: 4px; background-color: #101014; }
+  .ev { position: absolute; height: 20px; background: var(--accd); border: 1px solid var(--acc); border-radius: 3px;
         font-size: 12px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
   .ev span { outline: none; cursor: text; }
   .ev.bad { background: #8a1c1c; }
   .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; opacity: .6; pointer-events: none; }
-  .tl-help { font-size: 12px; color: #777; margin-top: 4px; }
+
+  /* ③ 音色：キーボードと同じ10列 */
+  .grid { display: grid; grid-template-columns: repeat(10, minmax(70px, 1fr)); gap: 4px 6px; }
+  .group { grid-row: 1; font-size: 11px; color: var(--acc); border-bottom: 1px solid var(--accd); padding-bottom: 2px; letter-spacing: .1em; }
+  .col { grid-row: 2; display: flex; flex-direction: column; gap: 3px; text-align: center; }
+  .switches { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .switches .sw { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 72px; }
+  .switches .sw button, .transport .item button { width: 100%; }
+  .switches .sep { width: 1px; background: var(--line); margin: 0 4px; }
+  .layer { margin-top: 8px; }
+  .layer + .layer { border-top: 1px dashed var(--line); padding-top: 8px; }
+
+  /* ④ 鍵盤：上段（黒鍵）を半キー左にずらす */
+  .piano { display: grid; grid-template-columns: repeat(21, minmax(34px, 1fr)); gap: 6px 0; }
+  .pk { margin: 0 3px; height: 60px; display: flex; flex-direction: column; justify-content: space-between; }
+  .pk.white { background: #e9e6df; color: #111; border-color: #999; height: 80px; }
+  .pk.white kbd { color: #111; }
+  .pk.black { background: #111; border-color: #555; }
+  .pk.oct { background: #2a2a34; }
+  .pk.down { background: var(--acc) !important; color: #000; }
+
+  #help { display: none; font-size: 12px; color: #aaa; margin-top: 8px; columns: 3; }
+  #help.show { display: block; }
 </style>
 </head>
 <body>
 <main>
-  <h1>DRONE SYNTHESIZER</h1>
 
+  <!-- ① 再生バー -->
   <section>
-    <h2>切替（<b class="h-track"></b>）</h2>
-    <div class="grid g12" id="toggles"></div>
+    <div class="transport" id="transport"></div>
     <div id="help"></div>
   </section>
 
-  <section id="knobSec">
-    <h2>つまみ（<b class="h-track"></b>）上キー＝上げる／下キー＝下げる</h2>
-    <div class="grid" id="knobs"></div>
+  <!-- ② トラック＋録音内容 -->
+  <section>
+    <h2>トラック　<span class="hint">Z〜N 選択／6 ON・OFF／7 音階／BS 録音消去　｜　棒の文字をクリックして書き換えると音が変わる（ド→ミ、Am→D、空で削除）</span></h2>
+    <div id="trackArea"></div>
   </section>
 
-  <section id="melSec">
-    <h2>メロディー音色（<b class="h-track"></b>）Shift ＋ キー　※鍵盤・コードの音に効く</h2>
-    <div class="grid" id="mtoggles" style="margin-bottom:8px"></div>
-    <div class="grid" id="mknobs"></div>
+  <!-- ③ 音色 -->
+  <section>
+    <h2>音色（<b class="h-track"></b>）</h2>
+    <div class="switches" id="switches"></div>
+    <div class="layer"><div class="grid" id="knobs"></div></div>
+    <div class="layer"><div class="grid" id="sknobs"></div></div>
   </section>
 
+  <!-- ④ 鍵盤 -->
   <section id="pianoSec">
-    <h2>鍵盤（<b class="h-track"></b>・<b id="h-pmode"></b>）<span id="v-poct"></span></h2>
+    <h2>鍵盤（<b class="h-track"></b>）<b id="h-pmode"></b>　<span id="v-poct"></span></h2>
     <div class="piano" id="piano"></div>
-  </section>
-
-  <section>
-    <h2>トラック選択（ON/OFF は 6、音量は O / L で選択中のトラックを操作）</h2>
-    <div class="grid" id="tracks"></div>
-  </section>
-
-  <section>
-    <h2>録音内容　<span id="pos"></span>　<button id="clear">録音消去<kbd>BS</kbd></button></h2>
-    <div id="timeline"></div>
-    <div class="tl-help">棒の文字をクリックして書き換えると音が変わります（例：ド → ミ、Am → D、ラ3 で高さ指定）。空にすると消えます。</div>
   </section>
 </main>
 
 <script>
 // ===== 設定 =====
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const CHORD_NAMES = ['C','Db','D','Eb','E','F','F#','G','Ab','A','Bb','B'];   // コード名は♭表記
 const SOL = ['ド','ド#','レ','レ#','ミ','ファ','ファ#','ソ','ソ#','ラ','ラ#','シ'];
 const WAVES = ['sawtooth','triangle','square','sine'];
 const VOICE_RATIOS = [0.5, 1, 1.5, 2];          // 低音・基音・5度・オクターブ
@@ -108,40 +116,42 @@ const TRACK_KEYS = ['Z', 'X', 'C', 'V', 'B', 'N'];
 const MODES = ['ドローン', '鍵盤', 'コード'];
 const QUANTS = [['なし', 0], ['1/4', 1], ['1/8', 0.5], ['1/16', 0.25]];   // 拍単位
 const BARS = [1, 2, 4, 8];
+const ARPS = ['なし', '上昇', '下降', '上下', 'ランダム'];
+const ARP_RATES = [['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125]];
 
-// 切替: [キー, 操作名, 表示名]（キーボードの並び順。操作名なし＝空き）
-const TOGGLES = [
-  ['1', 'v0',    '低音'],
-  ['2', 'v1',    '基音'],
-  ['3', 'v2',    '5度'],
-  ['4', 'v3',    'オクターブ'],
-  ['5', 'wave',  '波形'],
-  ['6', 'track', 'トラックON/OFF'],
-  ['7', 'mode',  '音階'],
-  ['8', 'quant', 'クォンタイズ'],
-  ['9', 'help',  '一覧'],
+// 再生バー: [キー, 操作名, 表示名]
+const TRANSPORT = [
   ['0', 'play',  '再生/停止'],
   ['-', 'rec',   '録音'],
   ['^', 'bars',  '小節数'],
+  ['8', 'quant', 'クォンタイズ'],
+  ['Tab', 'pmode', '演奏モード'],
+  ['9', 'help',  '一覧'],
+];
+// 音色の切替: [キー, 操作名, 表示名]。'|' は区切り
+const SWITCHES = [
+  ['1', 'v0', '低音'], ['2', 'v1', '基音'], ['3', 'v2', '5度'], ['4', 'v3', 'オクターブ'], ['5', 'wave', '波形'],
+  '|',
+  ['⇧1', 'mono', '単音/和音'], ['⇧2', 'arp', 'アルペジオ'], ['⇧3', 'arpRate', 'アルペジオ速さ'],
 ];
 
 // つまみ: [キー名, 表示名, 上げるキー, 下げるキー, 最小, 最大, 初期値, 1回の変化量, 単位]
-// 変化量が 1より大きく2未満 → 掛け算で変化（周波数系）
+// 変化量が 1より大きく2未満 → 掛け算で変化（周波数・時間系）
+// Shift なし：音の流れ順（音源 → フィルター → 出力）
 const KNOBS = [
-  ['root',   '基音',        'Q', 'A', 0,   11,   2,    1,    ''],
-  ['oct',    'オクターブ',  'W', 'S', 0,   5,    2,    1,    ''],
-  ['cutoff', 'フィルター',  'E', 'D', 60,  8000, 900,  1.15, 'Hz'],
-  ['reso',   '共鳴',        'R', 'F', 0,   25,   4,    1,    ''],
-  ['detune', 'うなり',      'T', 'G', 0,   30,   7,    1,    'cent'],
-  ['lfoRate','揺れ速さ',    'Y', 'H', 0.02,5,    0.1,  1.3,  'Hz'],
-  ['lfoAmt', '揺れ深さ',    'U', 'J', 0,   3000, 400,  100,  'Hz'],
-  ['reverb', '残響',        'I', 'K', 0,   1,    0.5,  0.05, ''],
-  ['volume', '音量',        'O', 'L', 0,   1,    0.5,  0.05, ''],
-  ['tempo',  'テンポ',      'P', ';', 40,  200,  70,   2,    'BPM'],   // テンポだけ全トラック共通
+  ['root',    '基音',           'Q', 'A', 0,     11,   2,    1,    ''],
+  ['oct',     'オクターブ',     'W', 'S', 0,     5,    2,    1,    ''],
+  ['detune',  'うなり',         'E', 'D', 0,     30,   7,    1,    'cent'],
+  ['sub',     'サブ音',         'R', 'F', 0,     1,    0,    0.05, ''],
+  ['noise',   'ノイズ',         'T', 'G', 0,     1,    0,    0.05, ''],
+  ['cutoff',  'フィルター',     'Y', 'H', 60,    8000, 900,  1.15, 'Hz'],
+  ['reso',    '共鳴',           'U', 'J', 0,     25,   4,    1,    ''],
+  ['filtEnv', 'フィルター動き', 'I', 'K', 0,     6000, 0,    200,  'Hz'],
+  ['reverb',  '残響',           'O', 'L', 0,     1,    0.5,  0.05, ''],
+  ['volume',  '音量',           'P', ';', 0,     1,    0.5,  0.05, ''],
 ];
-
-// メロディー音色（Shift + キー）。鍵盤・コードの音だけに効く
-const MKNOBS = [
+// Shift あり：音量の山 → ピッチ → 揺れ → 全体
+const SKNOBS = [
   ['attack',  '立ち上がり',     'Q', 'A', 0.005, 4,    0.06, 1.4,  's'],
   ['decay',   '減衰',           'W', 'S', 0.01,  4,    0.3,  1.4,  's'],
   ['sustain', '持続',           'E', 'D', 0,     1,    1,    0.05, ''],
@@ -149,17 +159,13 @@ const MKNOBS = [
   ['porta',   'ポルタメント',   'T', 'G', 0,     2,    0,    0.05, 's'],
   ['vibDepth','ビブラート深さ', 'Y', 'H', 0,     100,  0,    5,    'cent'],
   ['vibRate', 'ビブラート速さ', 'U', 'J', 0.5,   12,   5,    1.2,  'Hz'],
-  ['filtEnv', 'フィルター動き', 'I', 'K', 0,     6000, 0,    200,  'Hz'],
-  ['noise',   'ノイズ',         'O', 'L', 0,     1,    0,    0.05, ''],
-  ['sub',     'サブ音',         'P', ';', 0,     1,    0,    0.05, ''],
+  ['lfoRate', '揺れ速さ',       'I', 'K', 0.02,  5,    0.1,  1.3,  'Hz'],
+  ['lfoAmt',  '揺れ深さ',       'O', 'L', 0,     3000, 400,  100,  'Hz'],
+  ['tempo',   'テンポ',         'P', ';', 40,    200,  70,   2,    'BPM'],   // テンポだけ全トラック共通
 ];
-const ARPS = ['なし', '上昇', '下降', '上下', 'ランダム'];
-const ARP_RATES = [['1/4', 1], ['1/8', 0.5], ['1/16', 0.25], ['1/32', 0.125]];
-const MTOGGLES = [
-  ['1', 'mono',    '単音/和音'],
-  ['2', 'arp',     'アルペジオ'],
-  ['3', 'arpRate', 'アルペジオ速さ'],
-];
+// 見出し: [表示名, 開始列, 列数]
+const GROUPS  = [['音源', 1, 5], ['フィルター', 6, 3], ['出力', 9, 2]];
+const SGROUPS = [['音量の山', 1, 4], ['ピッチ', 5, 3], ['揺れ', 8, 2], ['全体', 10, 1]];
 
 // ===== 鍵盤（演奏モード）=====
 // 下段：A=オクターブ下げ、S〜L=白鍵、;=オクターブ上げ。上段：E R Y U I=黒鍵
@@ -187,7 +193,7 @@ const CHORD_Q = { '': [0,4,7], m: [0,3,7], dim: [0,3,6], aug: [0,4,8], sus2: [0,
 function newTrack(i) {
   const t = { on: i === 0, wave: 0, voices: [true, true, true, false], mode: 0, events: [],
               mono: false, arp: 0, arpRate: 1 };
-  [...KNOBS, ...MKNOBS].forEach(k => { if (k[0] !== 'tempo') t[k[0]] = k[6]; });
+  [...KNOBS, ...SKNOBS].forEach(k => { if (k[0] !== 'tempo') t[k[0]] = k[6]; });
   return t;
 }
 const tracks = TRACK_KEYS.map((_, i) => newTrack(i));
@@ -215,7 +221,6 @@ load();
 
 // ===== 音の名前 ⇔ 音 =====
 // 録音する1音（またはコード）は { pos, dur, kind:'note', semi, oct } か { pos, dur, kind:'chord', root, q, oct }
-const CHORD_NAMES = ['C','Db','D','Eb','E','F','F#','G','Ab','A','Bb','B'];   // コード名は♭表記（Bb など）
 const labelOf = ev => ev.kind === 'chord' ? CHORD_NAMES[ev.root] + ev.q : SOL[ev.semi] + ev.oct;
 const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
 function notesOf(ev) {
@@ -261,7 +266,7 @@ function descFor(k, tr) {
 }
 
 // ===== 音の仕組み =====
-let ac, master, reverbIn, nodes = [];
+let ac, master, reverbIn, noiseBuf, nodes = [];
 
 function makeReverb() {
   const len = ac.sampleRate * 5, buf = ac.createBuffer(2, len, ac.sampleRate);
@@ -272,11 +277,12 @@ function makeReverb() {
   const conv = ac.createConvolver(); conv.buffer = buf; return conv;
 }
 
-// 1トラック分：ドローン声部4つ／鍵盤の音 → フィルター → 出口 → (そのまま / 残響へ)
+// 1トラック分：ドローン（声部4つ＋サブ音＋ノイズ）／メロディー → フィルター → 出口 → (そのまま / 残響へ)
 function makeTrackNodes() {
   const n = {
     filter: ac.createBiquadFilter(), lfo: ac.createOscillator(), lfoGain: ac.createGain(),
     out: ac.createGain(), dry: ac.createGain(), send: ac.createGain(),
+    sub: ac.createOscillator(), subG: ac.createGain(), noise: ac.createBufferSource(), noiseG: ac.createGain(),
   };
   n.filter.type = 'lowpass';
   n.lfo.connect(n.lfoGain).connect(n.filter.frequency); n.lfo.start();
@@ -289,6 +295,9 @@ function makeTrackNodes() {
     const oscs = [0, 1].map(() => { const o = ac.createOscillator(); o.connect(g); o.start(); return o; });
     return { g, oscs };
   });
+  n.sub.type = 'sine'; n.subG.gain.value = 0; n.sub.connect(n.subG).connect(n.filter); n.sub.start();
+  n.noise.buffer = noiseBuf; n.noise.loop = true; n.noiseG.gain.value = 0;
+  n.noise.connect(n.noiseG).connect(n.filter); n.noise.start();
   return n;
 }
 
@@ -297,9 +306,9 @@ function setupAudio() {
   ac = new AudioContext();
   master = ac.createGain(); master.gain.value = 0.6; master.connect(ac.destination);
   reverbIn = makeReverb(); reverbIn.connect(master);
-  nodes = tracks.map(makeTrackNodes);
   noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
   noiseBuf.getChannelData(0).forEach((_, i, d) => d[i] = Math.random() * 2 - 1);
+  nodes = tracks.map(makeTrackNodes);
   applyAll();
   setInterval(() => { schedule(); liveArp(); }, 25);
 }
@@ -316,6 +325,9 @@ function applyTrack(tr, n) {
     });
     v.g.gain.setTargetAtTime(drone && tr.voices[i] ? 0.2 : 0, t, 0.8);   // ふわっと出入り
   });
+  n.sub.frequency.setTargetAtTime(f / 2, t, 0.3);
+  n.subG.gain.setTargetAtTime(drone ? tr.sub * 0.3 : 0, t, 0.8);
+  n.noiseG.gain.setTargetAtTime(drone ? tr.noise * 0.15 : 0, t, 0.8);
   n.filter.frequency.setTargetAtTime(tr.cutoff, t, 0.1);
   n.filter.Q.setTargetAtTime(tr.reso, t, 0.1);
   n.lfo.frequency.setTargetAtTime(tr.lfoRate, t, 0.1);
@@ -333,7 +345,6 @@ function applyAll() {
 // ===== メロディーの1音（またはコード）=====
 // 音源（波形2本＋サブ音＋ノイズ）→ 音ごとのフィルター → 音量の山（ADSR）→ トラックの出口
 const rt = tracks.map(() => ({ last: null, mono: null }));   // 直前の音程（ポルタメント用）と単音モードの音
-let noiseBuf;
 
 function voiceOn(ti, midis, t) {
   const tr = tracks[ti], n = nodes[ti];
@@ -520,28 +531,23 @@ const ACTIONS = {
     if (st.playing) { st.loopStart = ac.currentTime + 0.05; schedUntil = 0; }
     else st.rec = false;
   },
-  rec()   { if (!st.playing) ACTIONS.play(); st.rec = !st.rec; },
-  wave()  { cur().wave = (cur().wave + 1) % WAVES.length; },
-  track() { cur().on = !cur().on; },
-  mode()  { releaseAll(); cur().mode = (cur().mode + 1) % MODES.length; },
-  quant() { st.quant = (st.quant + 1) % QUANTS.length; },
-  bars()  { st.bars = (st.bars + 1) % BARS.length; renderTimeline(); },
-  help()  { document.getElementById('help').classList.toggle('show'); },
-  pmode() { releaseAll(); st.playMode = !st.playMode; },
-  clear() { cur().events = []; renderTimeline(); },
+  rec()     { if (!st.playing) ACTIONS.play(); st.rec = !st.rec; },
+  quant()   { st.quant = (st.quant + 1) % QUANTS.length; },
+  bars()    { st.bars = (st.bars + 1) % BARS.length; renderTimeline(); },
+  help()    { document.getElementById('help').classList.toggle('show'); },
+  pmode()   { releaseAll(); st.playMode = !st.playMode; },
+  clear()   { cur().events = []; renderTimeline(); },
+  track()   { cur().on = !cur().on; },
+  mode()    { releaseAll(); cur().mode = (cur().mode + 1) % MODES.length; },
+  wave()    { cur().wave = (cur().wave + 1) % WAVES.length; },
   mono()    { cur().mono = !cur().mono; },
   arp()     { cur().arp = (cur().arp + 1) % ARPS.length; },
   arpRate() { cur().arpRate = (cur().arpRate + 1) % ARP_RATES.length; },
 };
-MKNOBS.forEach(([key, , , , min, max, , step]) => {
-  const mul = step > 1 && step < 2;
-  ACTIONS[key + '+'] = () => cur()[key] = Math.min(max, mul ? cur()[key] * step : cur()[key] + step);
-  ACTIONS[key + '-'] = () => cur()[key] = Math.max(min, mul ? cur()[key] / step : cur()[key] - step);
-});
 [0, 1, 2, 3].forEach(i => ACTIONS['v' + i] = () => cur().voices[i] = !cur().voices[i]);
 TRACK_KEYS.forEach((_, i) => ACTIONS['sel' + i] = () => { releaseAll(); st.sel = i; renderTimeline(); });
 
-KNOBS.forEach(([key, , , , min, max, , step]) => {
+[...KNOBS, ...SKNOBS].forEach(([key, , , , min, max, , step]) => {
   const mul = step > 1 && step < 2;
   ACTIONS[key + '+'] = () => tgt(key)[key] = Math.min(max, mul ? tgt(key)[key] * step : tgt(key)[key] + step);
   ACTIONS[key + '-'] = () => tgt(key)[key] = Math.max(min, mul ? tgt(key)[key] / step : tgt(key)[key] - step);
@@ -553,63 +559,63 @@ ACTIONS['tempo+'] = () => setTempo(st.tempo + 2);
 ACTIONS['tempo-'] = () => setTempo(st.tempo - 2);
 
 // キー → 操作
-const KEYMAP = { Space: 'play', Tab: 'pmode', Backspace: 'clear' };
-const codeOf = k => k === ';' ? 'Semicolon' : k === '-' ? 'Minus' : k === '^' ? 'Equal' : /\d/.test(k) ? 'Digit' + k : 'Key' + k;
+const codeOf = k => k === ';' ? 'Semicolon' : k === '-' ? 'Minus' : k === '^' ? 'Equal' : k === 'Tab' ? 'Tab'
+                  : /\d/.test(k) ? 'Digit' + k : 'Key' + k;
 const keyOf = code => code === 'Semicolon' ? ';' : code.startsWith('Key') ? code.slice(3) : null;
-TOGGLES.forEach(([k, act]) => { if (act) KEYMAP[codeOf(k)] = act; });
-KNOBS.forEach(([key, , up, down]) => { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; });
-TRACK_KEYS.forEach((k, i) => KEYMAP[codeOf(k)] = 'sel' + i);
-// Shift + キー → メロディー音色
+const KEYMAP = { Space: 'play', Backspace: 'clear', Digit6: 'track', Digit7: 'mode' };
 const SHIFTMAP = {};
-MTOGGLES.forEach(([k, act]) => SHIFTMAP[codeOf(k)] = act);
-MKNOBS.forEach(([key, , up, down]) => { SHIFTMAP[codeOf(up)] = key + '+'; SHIFTMAP[codeOf(down)] = key + '-'; });
+TRANSPORT.forEach(([k, act]) => KEYMAP[codeOf(k)] = act);
+SWITCHES.forEach(s => {
+  if (s === '|') return;
+  const [k, act] = s;
+  if (k[0] === '⇧') SHIFTMAP[codeOf(k.slice(1))] = act; else KEYMAP[codeOf(k)] = act;
+});
+KNOBS.forEach(([key, , up, down]) => { KEYMAP[codeOf(up)] = key + '+'; KEYMAP[codeOf(down)] = key + '-'; });
+SKNOBS.forEach(([key, , up, down]) => { SHIFTMAP[codeOf(up)] = key + '+'; SHIFTMAP[codeOf(down)] = key + '-'; });
+TRACK_KEYS.forEach((k, i) => KEYMAP[codeOf(k)] = 'sel' + i);
 
 function run(act) {
   ACTIONS[act](); applyAll(); render(); save();
-  const b = document.querySelector(`[data-act="${act}"]`);
-  if (b) { b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 120); }
+  document.querySelectorAll(`[data-act="${act}"]`).forEach(b => {
+    b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 120);
+  });
 }
 
-// ===== 画面（縦に要素、横にキー順） =====
+// ===== 画面 =====
 const btn = (act, key, label, cls = '') =>
-  `<button class="${cls}" ${act ? `data-act="${act}"` : 'disabled'}><kbd>${key}</kbd>${label}</button>`;
+  `<button class="${cls}" data-act="${act}"><kbd>${key}</kbd>${label}</button>`;
 
-document.getElementById('toggles').innerHTML = TOGGLES.map(([key, act, name]) =>
-  `<div class="col${act ? '' : ' empty'}">
-     ${btn(act, key, name || '', act === 'rec' ? 'rec' : '')}
-     <span class="val" id="t-${act}"></span>
-   </div>`).join('');
+// ① 再生バー
+document.getElementById('transport').innerHTML =
+  TRANSPORT.slice(0, 2).map(([k, act, n]) =>
+    `<div class="item">${btn(act, k, n, act === 'rec' ? 'rec' : '')}<span class="val" id="t-${act}"></span></div>`).join('') +
+  `<div class="lcd"><span id="pos">1.1</span><small id="lcdsub"></small></div>` +
+  `<div class="item">${btn('tempo-', '⇧;', '−')}<span class="name">テンポ</span></div>
+   <div class="item">${btn('tempo+', '⇧P', '＋')}<span class="val" id="t-tempo"></span></div>` +
+  TRANSPORT.slice(2, 4).map(([k, act, n]) =>
+    `<div class="item">${btn(act, k, n)}<span class="val" id="t-${act}"></span></div>`).join('') +
+  `<div class="spacer"></div>` +
+  TRANSPORT.slice(4).map(([k, act, n]) =>
+    `<div class="item">${btn(act, k, n)}<span class="val" id="t-${act}"></span></div>`).join('');
 
-document.getElementById('knobs').innerHTML = KNOBS.map(([key, name, up, down]) =>
-  `<div class="col">
-     ${btn(key + '+', up, '＋')}
-     <span class="name">${name}</span>
-     <span class="val" id="v-${key}"></span>
-     ${btn(key + '-', down, '−')}
-   </div>`).join('');
+// ③ 音色：切替
+document.getElementById('switches').innerHTML = SWITCHES.map(s => s === '|' ? '<div class="sep"></div>' :
+  `<div class="sw">${btn(s[1], s[0], s[2])}<span class="val" id="t-${s[1]}"></span></div>`).join('');
 
-document.getElementById('mtoggles').innerHTML = MTOGGLES.map(([key, act, name]) =>
-  `<div class="col">${btn(act, '⇧' + key, name)}<span class="val" id="t-${act}"></span></div>`).join('');
+// ③ 音色：つまみ（見出し＋10列）
+const knobGrid = (list, groups, pre) =>
+  groups.map(([n, c, w]) => `<div class="group" style="grid-column:${c}/span ${w}">${n}</div>`).join('') +
+  list.map(([key, name, up, down], i) =>
+    `<div class="col" style="grid-column:${i + 1}">
+       ${btn(key + '+', pre + up, '＋')}
+       <span class="name">${name}</span>
+       <span class="val" id="v-${key}"></span>
+       ${btn(key + '-', pre + down, '−')}
+     </div>`).join('');
+document.getElementById('knobs').innerHTML = knobGrid(KNOBS, GROUPS, '');
+document.getElementById('sknobs').innerHTML = knobGrid(SKNOBS, SGROUPS, '⇧');
 
-document.getElementById('mknobs').innerHTML = MKNOBS.map(([key, name, up, down]) =>
-  `<div class="col">
-     ${btn(key + '+', '⇧' + up, '＋')}
-     <span class="name">${name}</span>
-     <span class="val" id="v-${key}"></span>
-     ${btn(key + '-', '⇧' + down, '−')}
-   </div>`).join('');
-
-document.getElementById('tracks').innerHTML = TRACK_KEYS.map((k, i) =>
-  `<div class="col">
-     ${btn('sel' + i, k, 'トラック' + (i + 1))}
-     <span class="val" id="s-${i}"></span>
-     <span class="name" id="m-${i}"></span>
-     <span class="badge" id="on-${i}"></span>
-     <span class="name">音量 <span id="vol-${i}"></span></span>
-     <div class="meter"><i id="bar-${i}"></i></div>
-   </div>`).join('');
-
-// 鍵盤：上段は2マス目から、下段は3マス目から2マスずつ（上段が半キー左にずれる）
+// ④ 鍵盤：上段は2マス目から、下段は3マス目から2マスずつ（上段が半キー左にずれる）
 document.getElementById('piano').innerHTML =
   PIANO_TOP.map((k, i) => k in BLACK
     ? `<button class="pk black" data-pk="${k}" style="grid-row:1;grid-column:${2 * i + 2}/span 2"><kbd>${k}</kbd><span></span></button>`
@@ -624,56 +630,51 @@ document.querySelectorAll('[data-pk]').forEach(b => {
 
 // ショートカット一覧
 document.getElementById('help').innerHTML =
-  TOGGLES.filter(t => t[1]).map(([k, , n]) => `<div>${k}：${n}</div>`).join('') +
+  TRANSPORT.map(([k, , n]) => `<div>${k}：${n}</div>`).join('') +
+  `<div>Space：再生/停止</div><div>Shift+P / ;：テンポ</div>
+   <div>${TRACK_KEYS.join(' ')}：トラック選択</div><div>6：トラックON/OFF</div><div>7：音階</div><div>BS：録音消去</div>` +
+  SWITCHES.filter(s => s !== '|').map(([k, , n]) => `<div>${k.replace('⇧', 'Shift+')}：${n}</div>`).join('') +
   KNOBS.map(([, n, u, d]) => `<div>${u} / ${d}：${n}</div>`).join('') +
-  MTOGGLES.map(([k, , n]) => `<div>Shift+${k}：${n}</div>`).join('') +
-  MKNOBS.map(([, n, u, d]) => `<div>Shift+${u} / ${d}：${n}</div>`).join('') +
-  `<div>${TRACK_KEYS.join(' ')}：トラック1〜6を選ぶ</div><div>Space：再生/停止</div><div>BS：録音消去</div>
-   <div>Tab：演奏モード切替</div><div>演奏モード中：S〜L 白鍵、E R Y U I 黒鍵、A / ; オクターブ</div>`;
+  SKNOBS.map(([, n, u, d]) => `<div>Shift+${u} / ${d}：${n}</div>`).join('') +
+  `<div>演奏モード中：S〜L 白鍵、E R Y U I 黒鍵、A / ; オクターブ</div>`;
 
 function render() {
   const tr = cur();
   const fmt = (v, u) => (v < 10 ? v.toFixed(2) : Math.round(v)) + ' ' + u;
-  document.querySelectorAll('.h-track').forEach(e => e.textContent = 'トラック' + (st.sel + 1));
+  const set = (id, s) => { const e = document.getElementById(id); if (e) e.textContent = s; };
+  const on = (act, b) => document.querySelectorAll(`[data-act="${act}"]`).forEach(e => e.classList.toggle('on', b));
+  document.querySelectorAll('.h-track').forEach(e => e.textContent = `トラック${st.sel + 1}・${MODES[tr.mode]}`);
 
-  KNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(tgt(key)[key], unit));
-  MKNOBS.forEach(([key, , , , , , , , unit]) => document.getElementById('v-' + key).textContent = fmt(tr[key], unit));
-  document.getElementById('t-mono').textContent = tr.mono ? '単音' : '和音';
-  document.getElementById('t-arp').textContent = ARPS[tr.arp];
-  document.getElementById('t-arpRate').textContent = ARP_RATES[tr.arpRate][0];
-  document.querySelector('[data-act="mono"]').classList.toggle('on', tr.mono);
-  document.querySelector('[data-act="arp"]').classList.toggle('on', tr.arp > 0);
-  document.getElementById('melSec').classList.toggle('dim', tr.mode === 0);
-  document.getElementById('v-root').textContent = NOTE_NAMES[tr.root];
-  document.getElementById('v-oct').textContent = tr.oct;
-  const tv = (id, s) => document.getElementById('t-' + id).textContent = s;
-  tv('wave', WAVES[tr.wave]); tv('track', tr.on ? 'ON' : 'OFF'); tv('mode', MODES[tr.mode]);
-  tv('quant', QUANTS[st.quant][0]); tv('bars', BARS[st.bars] + '小節');
-  tv('play', st.playing ? '再生中' : '停止'); tv('rec', st.rec ? '録音中' : '');
-  [0, 1, 2, 3].forEach(i => document.querySelector(`[data-act="v${i}"]`).classList.toggle('on', tr.voices[i]));
-  document.querySelector('[data-act="track"]').classList.toggle('on', tr.on);
-  document.querySelector('[data-act="play"]').classList.toggle('on', st.playing);
-  document.querySelector('[data-act="rec"]').classList.toggle('on', st.rec);
+  // ① 再生バー
+  set('t-play', st.playing ? '再生中' : '停止'); on('play', st.playing);
+  set('t-rec', st.rec ? '録音中' : ''); on('rec', st.rec);
+  set('t-tempo', st.tempo + ' BPM');
+  set('t-bars', BARS[st.bars] + '小節'); set('t-quant', QUANTS[st.quant][0]);
+  set('t-pmode', st.playMode ? 'ON' : ''); on('pmode', st.playMode);
 
-  // トラック一覧
+  // ③ 音色
+  [...KNOBS, ...SKNOBS].forEach(([key, , , , , , , , unit]) => set('v-' + key, fmt(tgt(key)[key], unit)));
+  set('v-root', NOTE_NAMES[tr.root]); set('v-oct', tr.oct);
+  [0, 1, 2, 3].forEach(i => on('v' + i, tr.voices[i]));
+  set('t-wave', WAVES[tr.wave]);
+  set('t-mono', tr.mono ? '単音' : '和音'); on('mono', tr.mono);
+  set('t-arp', ARPS[tr.arp]); on('arp', tr.arp > 0);
+  set('t-arpRate', ARP_RATES[tr.arpRate][0]);
+
+  // ② トラック見出し
   tracks.forEach((t, i) => {
-    const b = document.querySelector(`[data-act="sel${i}"]`);
-    b.classList.toggle('on', t.on);
-    b.classList.toggle('sel', i === st.sel);
-    document.getElementById('s-' + i).textContent = NOTE_NAMES[t.root] + t.oct;
-    document.getElementById('m-' + i).textContent = MODES[t.mode];
-    const on = document.getElementById('on-' + i);
-    on.textContent = t.on ? 'ON' : 'OFF';
-    on.classList.toggle('on', t.on);
-    document.getElementById('vol-' + i).textContent = t.volume.toFixed(2);
-    document.getElementById('bar-' + i).style.width = (t.volume * 100) + '%';
+    document.getElementById('th-' + i).classList.toggle('sel', i === st.sel);
+    on('sel' + i, t.on);
+    set('tm-' + i, `${MODES[t.mode]}・${NOTE_NAMES[t.root]}${t.oct}`);
+    const b = document.getElementById('tb-' + i);
+    b.textContent = t.on ? 'ON' : 'OFF'; b.classList.toggle('on', t.on);
+    document.getElementById('tv-' + i).style.width = (t.volume * 100) + '%';
   });
 
-  // 鍵盤：ドローンのときは隠す。演奏モード中はつまみを薄くする
+  // ④ 鍵盤：ドローンのときは隠す
   document.getElementById('pianoSec').style.display = tr.mode ? '' : 'none';
-  document.getElementById('knobSec').classList.toggle('dim', st.playMode);
-  document.getElementById('h-pmode').textContent = st.playMode ? '演奏モード中（Tab で戻る）' : 'Tab で演奏モード';
-  document.getElementById('v-poct').textContent = '　オクターブ ' + st.playOct;
+  set('h-pmode', st.playMode ? '演奏モード中（Tab で戻る）' : 'Tab で演奏モード');
+  set('v-poct', 'オクターブ ' + st.playOct);
   document.querySelectorAll('[data-pk]').forEach(b => {
     const k = b.dataset.pk, d = descFor(k, tr);
     b.querySelector('span').textContent = k === 'A' ? 'Oct−' : k === ';' ? 'Oct＋' : d ? labelOf(d) : '';
@@ -681,14 +682,14 @@ function render() {
   });
 }
 
-// ===== 録音内容（トラックごと・横棒の長さ＝音の長さ）=====
+// ② トラック＋録音内容（横棒の長さ＝音の長さ）
 let editing = false;
 function renderTimeline() {
   if (editing) return;
   const Lb = loopBeats();
   const grid = `repeating-linear-gradient(90deg, #3a3a44 0 1px, transparent 1px ${100 / BARS[st.bars]}%),
-                repeating-linear-gradient(90deg, #22222a 0 1px, transparent 1px ${100 / Lb}%)`;
-  document.getElementById('timeline').innerHTML = tracks.map((tr, ti) => {
+                repeating-linear-gradient(90deg, #1e1e26 0 1px, transparent 1px ${100 / Lb}%)`;
+  document.getElementById('trackArea').innerHTML = tracks.map((tr, ti) => {
     const lanes = [];                                // 重なる音は段をずらす
     const bars = tr.events.map((ev, ei) => {
       if (ev.pos >= Lb) return '';
@@ -699,12 +700,18 @@ function renderTimeline() {
       return `<div class="ev" style="left:${ev.pos / Lb * 100}%;width:${w / Lb * 100}%;top:${2 + lane * 22}px" title="${labelOf(ev)}">
                 <span contenteditable="true" data-t="${ti}" data-e="${ei}">${labelOf(ev)}</span></div>`;
     }).join('');
-    return `<div class="tl-row">
-      <div class="tl-name${ti === st.sel ? ' sel' : ''}">トラック${ti + 1}<br>${MODES[tr.mode]}</div>
-      <div class="tl" style="height:${Math.max(1, lanes.length) * 22 + 4}px;background-image:${grid}">${bars}<div class="ph"></div></div>
+    return `<div class="trow">
+      <div class="thead" id="th-${ti}" data-sel="${ti}">
+        ${btn('sel' + ti, TRACK_KEYS[ti], '')}
+        <span class="tname">トラック${ti + 1}</span>
+        <span class="tinfo"><span class="badge" id="tb-${ti}"></span><span id="tm-${ti}"></span></span>
+        <div class="meter"><i id="tv-${ti}"></i></div>
+      </div>
+      <div class="tl" style="height:${Math.max(2, lanes.length) * 22 + 4}px;background-image:${grid}">${bars}<div class="ph"></div></div>
     </div>`;
   }).join('');
 
+  document.querySelectorAll('.thead').forEach(h => h.onclick = () => run('sel' + h.dataset.sel));
   document.querySelectorAll('.ev span').forEach(sp => {
     sp.onfocus = () => editing = true;
     sp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); sp.blur(); } };
@@ -725,38 +732,43 @@ function renderTimeline() {
       save(); renderTimeline();
     };
   });
+  render();
 }
 
 // 再生位置の表示
 function tick() {
+  const Lb = loopBeats();
   if (ac && st.playing) {
-    const Lb = loopBeats(), p = (((ac.currentTime - st.loopStart) / beatSec()) % Lb + Lb) % Lb;
+    const p = (((ac.currentTime - st.loopStart) / beatSec()) % Lb + Lb) % Lb;
     document.querySelectorAll('.ph').forEach(e => e.style.left = (p / Lb * 100) + '%');
-    document.getElementById('pos').textContent = `小節 ${Math.floor(p / 4) + 1} / ${BARS[st.bars]}　拍 ${Math.floor(p % 4) + 1}`;
-  } else document.getElementById('pos').textContent = '';
+    document.getElementById('pos').textContent = `${Math.floor(p / 4) + 1}.${Math.floor(p % 4) + 1}`;
+  } else document.getElementById('pos').textContent = '1.1';
+  document.getElementById('lcdsub').textContent = `小節.拍　／ ${BARS[st.bars]}小節ループ`;
   requestAnimationFrame(tick);
 }
 
 // ===== キーボード操作 =====
-document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => run(b.dataset.act));
-document.getElementById('clear').onclick = () => run('clear');
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (b) { e.stopPropagation(); run(b.dataset.act); }
+}, true);
 
 document.addEventListener('keydown', e => {
   if (e.target.isContentEditable) return;           // 文字を書き換えている間は無視
-  if (e.shiftKey && SHIFTMAP[e.code]) {             // Shift + キー：メロディー音色（演奏モード中でも効く）
+  if (e.shiftKey && SHIFTMAP[e.code]) {             // Shift + キー（演奏モード中でも効く）
     e.preventDefault();
     if (!e.repeat || /[+-]$/.test(SHIFTMAP[e.code])) run(SHIFTMAP[e.code]);
     return;
   }
   const k = keyOf(e.code);
-  // 演奏モード中：英字キーは鍵盤（トラック選択 Z〜N と テンポ P は残す）
-  if (st.playMode && k && !TRACK_KEYS.includes(k) && k !== 'P') {
+  // 演奏モード中：英字キーは鍵盤（トラック選択 Z〜N は残す）
+  if (st.playMode && k && !TRACK_KEYS.includes(k)) {
     e.preventDefault();
     if (!e.repeat) { pianoDown(k); render(); save(); }
     return;
   }
   const act = KEYMAP[e.code];
-  if (!act || e.repeat && ['play', 'rec', 'pmode', 'mode'].includes(act)) return;
+  if (!act || e.repeat && !/[+-]$/.test(act)) return;
   e.preventDefault(); run(act);
 });
 document.addEventListener('keyup', e => {
@@ -765,7 +777,7 @@ document.addEventListener('keyup', e => {
   if (k && held[k]) { pianoUp(k); render(); }
 });
 
-render(); renderTimeline(); tick();
+renderTimeline(); tick();
 </script>
 </body>
 </html>
