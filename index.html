@@ -65,8 +65,8 @@
   .layer + .layer { border-top: 1px dashed var(--line); padding-top: 8px; }
 
   /* ④ 鍵盤：上段（黒鍵）を半キー左にずらす */
-  .piano { display: grid; grid-template-columns: repeat(21, minmax(34px, 1fr)); gap: 6px 0; }
-  .pk { margin: 0 3px; height: 60px; display: flex; flex-direction: column; justify-content: space-between; }
+  .piano { display: grid; grid-template-columns: repeat(34, minmax(18px, 1fr)); gap: 6px 0; }
+  .pk { margin: 0 2px; height: 60px; overflow: hidden; padding: 4px 0; font-size: 12px; display: flex; flex-direction: column; justify-content: space-between; }
   .pk.white { background: #e9e6df; color: #111; border-color: #999; height: 80px; }
   .pk.white kbd { color: #111; }
   .pk.black { background: #111; border-color: #555; }
@@ -79,8 +79,8 @@
     #pianoSec { position: sticky; bottom: 0; z-index: 10; margin: 0 -16px; border-radius: 0;
                 padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 12px #000; }
     #pianoSec h2 { margin-bottom: 4px; }
-    .piano { grid-template-columns: repeat(21, minmax(0, 1fr)); gap: 4px 0; }
-    .pk { margin: 0 1px; padding: 2px 0; height: 52px; font-size: 10px; }
+    .piano { grid-template-columns: repeat(34, minmax(0, 1fr)); gap: 4px 0; }
+    .pk { margin: 0 1px; padding: 2px 0; height: 52px; font-size: 9px; letter-spacing: -.03em; }
     .pk.white { height: 72px; }
     .pk kbd { font-size: 10px; }
   }
@@ -183,8 +183,6 @@ const SGROUPS = [['音量の山', 1, 4], ['ピッチ', 5, 3], ['揺れ', 8, 2], 
 
 // ===== 鍵盤（演奏モード）=====
 // 下段：A=オクターブ下げ、S〜L=白鍵、;=オクターブ上げ。上段：E R Y U I=黒鍵
-const PIANO_TOP = ['Q','W','E','R','T','Y','U','I','O','P'];
-const PIANO_BOTTOM = ['A','S','D','F','G','H','J','K','L',';'];
 const WHITE = { S: 0, D: 2, F: 4, G: 5, H: 7, J: 9, K: 11, L: 12 };   // C からの半音数
 const BLACK = { E: 1, R: 3, Y: 6, U: 8, I: 10 };
 
@@ -265,15 +263,19 @@ function chordQ(iv) {
   return Object.keys(CHORD_Q).find(q => CHORD_Q[q].join() === r) ?? '';
 }
 
-// 鍵盤のキー → 鳴らすもの
-function descFor(k, tr) {
-  if (tr.mode === 1) {
-    const s = WHITE[k] ?? BLACK[k];
-    if (s === undefined) return null;
-    return { kind: 'note', semi: s % 12, oct: st.playOct + Math.floor(s / 12) };
-  }
-  if (tr.mode === 2 && CHORDS[k]) {
-    const iv = CHORDS[k], r = tr.root + iv[0];
+// 鍵盤は2オクターブ（C から数えた半音 0〜24）。PCキーは下の1オクターブ（0〜12）だけ
+const KEY_OF_SEMI = {};                              // 半音 → PCキー（コードの割り当てにも使う）
+Object.entries({ ...WHITE, ...BLACK }).forEach(([k, s]) => KEY_OF_SEMI[s] = k);
+const pcToId = k => k === 'A' || k === ';' ? k : (WHITE[k] ?? BLACK[k]) !== undefined ? String(WHITE[k] ?? BLACK[k]) : null;
+
+// 鍵盤（半音の番号）→ 鳴らすもの
+function descFor(id, tr) {
+  const s = +id;
+  if (isNaN(s)) return null;
+  const up = Math.floor(s / 12);                     // 何オクターブ上か
+  if (tr.mode === 1) return { kind: 'note', semi: s % 12, oct: st.playOct + up };
+  if (tr.mode === 2) {
+    const iv = CHORDS[KEY_OF_SEMI[s % 12]].map(x => x + 12 * up), r = tr.root + iv[0];
     return { kind: 'chord', root: r % 12, q: chordQ(iv), oct: st.playOct + Math.floor(r / 12) };
   }
   return null;
@@ -636,13 +638,21 @@ const knobGrid = (list, groups, pre) =>
 document.getElementById('knobs').innerHTML = knobGrid(KNOBS, GROUPS, '');
 document.getElementById('sknobs').innerHTML = knobGrid(SKNOBS, SGROUPS, '⇧');
 
-// ④ 鍵盤：上段は2マス目から、下段は3マス目から2マスずつ（上段が半キー左にずれる）
-document.getElementById('piano').innerHTML =
-  PIANO_TOP.map((k, i) => k in BLACK
-    ? `<button class="pk black" data-pk="${k}" style="grid-row:1;grid-column:${2 * i + 2}/span 2"><kbd>${k}</kbd><span></span></button>`
-    : '').join('') +
-  PIANO_BOTTOM.map((k, i) =>
-    `<button class="pk ${k in WHITE ? 'white' : 'oct'}" data-pk="${k}" style="grid-row:2;grid-column:${2 * i + 3}/span 2"><kbd>${k}</kbd><span></span></button>`).join('');
+// ④ 鍵盤（2オクターブ）：1鍵＝2マス。黒鍵は白鍵の間に半鍵ずらして置く
+//   [Oct−][白鍵15個][Oct＋] = 34マス
+{
+  const isBlack = s => [1, 3, 6, 8, 10].includes(s % 12);
+  const pk = (id, cls, row, col, key) =>
+    `<button class="pk ${cls}" data-pk="${id}" style="grid-row:${row};grid-column:${col}/span 2"><kbd>${key}</kbd><span></span></button>`;
+  let html = pk('A', 'oct', 2, 1, 'A'), wi = 0;
+  for (let s = 0; s <= 24; s++) {
+    const key = s <= 12 ? KEY_OF_SEMI[s] : '';      // PCキーは下の1オクターブだけ
+    if (isBlack(s)) html += pk(s, 'black', 1, 3 + 2 * (wi - 1) + 1, key);
+    else html += pk(s, 'white', 2, 3 + 2 * wi++, key);
+  }
+  html += pk(';', 'oct', 2, 3 + 2 * wi, ';');
+  document.getElementById('piano').innerHTML = html;
+}
 document.querySelectorAll('[data-pk]').forEach(b => {
   const k = b.dataset.pk;
   b.onpointerdown = () => { pianoDown(k); render(); };
@@ -789,7 +799,8 @@ document.addEventListener('keydown', e => {
   // 演奏モード中：英字キーは鍵盤（トラック選択 Z〜N は残す）
   if (st.playMode && k && !TRACK_KEYS.includes(k)) {
     e.preventDefault();
-    if (!e.repeat) { pianoDown(k); render(); save(); }
+    const id = pcToId(k);
+    if (id && !e.repeat) { pianoDown(id); render(); save(); }
     return;
   }
   const act = KEYMAP[e.code];
@@ -798,8 +809,8 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => {
   if (e.target.isContentEditable) return;
-  const k = keyOf(e.code);
-  if (k && held[k]) { pianoUp(k); render(); }
+  const id = keyOf(e.code) && pcToId(keyOf(e.code));
+  if (id && held[id]) { pianoUp(id); render(); }
 });
 
 renderTimeline(); tick();
